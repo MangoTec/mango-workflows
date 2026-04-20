@@ -33,11 +33,13 @@ jobs:
       - name: Process dependencies
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_PAT_PORTAL: ${{ secrets.GH_PAT_PORTAL }}
           CLOSED_ISSUE: ${{ inputs.closed-issue }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
         run: |
           set -euo pipefail
           CONFIG=".github/pipeline-config.json"
+          TOKEN="${GH_PAT_PORTAL:-$GH_TOKEN}"
           WAVE_GATE_REQUIRED=$(jq -r '.autonomy.waveGateRequired' "$CONFIG")
 
           # Find which wave the closed issue belongs to
@@ -112,7 +114,7 @@ jobs:
           else
             echo "No wave gate. Unblocking Wave $NEXT_WAVE..."
             for issue_num in $NEXT_ISSUES; do
-              gh issue edit "$issue_num" \
+              GH_TOKEN="$TOKEN" gh issue edit "$issue_num" \
                 --remove-label "status:blocked" \
                 --add-label "status:ready" 2>/dev/null || true
             done

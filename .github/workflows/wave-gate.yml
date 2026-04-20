@@ -29,11 +29,13 @@ jobs:
       - name: Unlock next wave issues
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_PAT_PORTAL: ${{ secrets.GH_PAT_PORTAL }}
           GATE_ISSUE: ${{ inputs.gate-issue }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
         run: |
           set -euo pipefail
           CONFIG=".github/pipeline-config.json"
+          TOKEN="${GH_PAT_PORTAL:-$GH_TOKEN}"
 
           # Find which wave this gate belongs to
           GATE_WAVE=""
@@ -70,7 +72,7 @@ jobs:
 
           for issue_num in $NEXT_ISSUES; do
             echo "Unblocking #$issue_num → status:ready"
-            gh issue edit "$issue_num" \
+            GH_TOKEN="$TOKEN" gh issue edit "$issue_num" \
               --remove-label "status:blocked" \
               --add-label "status:ready" 2>/dev/null || true
             UNLOCKED="$UNLOCKED #$issue_num"
@@ -88,5 +90,5 @@ jobs:
               -d "{\"text\": \"$SLACK_MSG\"}" || true
           fi
 
-          gh issue comment "$GATE_ISSUE" --body "🚀 **Wave $NEXT_WAVE unlocked!** Issues now ready:$UNLOCKED"
-          gh issue close "$GATE_ISSUE" --reason completed
+          GH_TOKEN="$TOKEN" gh issue comment "$GATE_ISSUE" --body "🚀 **Wave $NEXT_WAVE unlocked!** Issues now ready:$UNLOCKED"
+          GH_TOKEN="$TOKEN" gh issue close "$GATE_ISSUE" --reason completed
