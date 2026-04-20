@@ -1,0 +1,192 @@
+name: Assign Agent
+
+# Reusable workflow: validates issue spec, routes to AI provider.
+# Supports: copilot (assigns user) or codex (dispatches local workflow).
+# Level 1: spec linter, provider-override for retry/fallback.
+
+on:
+  workflow_call:
+    inputs:
+      issue-number:
+        description: "Issue number that received status:ready"
+        type: string
+        required: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  assign:
+    name: Validate & route to agent
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      contents: read
+      actions: write
+
+    steps:
+      - name: Checkout (caller's repo)
+        uses: actions/checkout@v4
+
+      - name: Read pipeline config
+        id: config
+        run: |
+          CONFIG=$(cat .github/pipeline-config.json)
+
+          # Agent config (v3 schema with v2 fallback)
+          echo "primary=$(echo "$CONFIG" | jq -r '.agent.primary // .agent.provider // "copilot"')" >> "$GITHUB_OUTPUT"
+          echo "fallback=$(echo "$CONFIG" | jq -r '.agent.fallback // empty')" >> "$GITHUB_OUTPUT"
+          echo "max_retries=$(echo "$CONFIG" | jq -r '.agent.maxRetries // 2')" >> "$GITHUB_OUTPUT"
+
+          # Copilot
+          echo "copilot_user=$(echo "$CONFIG" | jq -r '.agent.providers.copilot.username // .agent.copilot.username // "copilot-swe-agent"')" >> "$GITHUB_OUTPUT"
+
+          # Codex
+          echo "codex_model=$(echo "$CONFIG" | jq -r '.agent.providers.codex.model // .agent.codex.model // "gpt-5.4"')" >> "$GITHUB_OUTPUT"
+          echo "codex_effort=$(echo "$CONFIG" | jq -r '.agent.providers.codex.effort // .agent.codex.effort // "medium"')" >> "$GITHUB_OUTPUT"
+          echo "codex_sandbox=$(echo "$CONFIG" | jq -r '.agent.providers.codex.sandbox // .agent.codex.sandbox // "workspace-write"')" >> "$GITHUB_OUTPUT"
+          echo "codex_prompt=$(echo "$CONFIG" | jq -r '.agent.providers.codex.promptTemplate // .agent.codex.promptTemplate // ".github/codex/prompts/implement.md"')" >> "$GITHUB_OUTPUT"
+
+          # Spec linter
+          echo "min_body=$(echo "$CONFIG" | jq -r '.specLinter.minBodyLength // 200')" >> "$GITHUB_OUTPUT"
+          SECTIONS=$(echo "$CONFIG" | jq -r '(.specLinter.requiredSections // ["Requirements","Acceptance Criteria"]) | join("|")')
+          echo "required_sections=$SECTIONS" >> "$GITHUB_OUTPUT"
+
+          # Autonomy
+          echo "auto_assign=$(echo "$CONFIG" | jq -r '.autonomy.autoAssignAgent // true')" >> "$GITHUB_OUTPUT"
+          echo "autonomy=$(echo "$CONFIG" | jq -r '.autonomy.level // "human-gate-pr"')" >> "$GITHUB_OUTPUT"
+
+      - name: Determine provider
+        id: provider
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ inputs.issue-number }}
+          PRIMARY: ${{ steps.config.outputs.primary }}
+        run: |
+          # Check for provider-override label (set by agent-retry on fallback)
+          OVERRIDE=$(gh issue view "$ISSUE_NUMBER" --json labels --jq '[.labels[].name | select(startswith("provider-override:"))] | first // empty' | sed 's/provider-override://')
+
+          if [ -n "$OVERRIDE" ]; then
+            echo "provider=$OVERRIDE" >> "$GITHUB_OUTPUT"
+            echo "Provider override: $OVERRIDE"
+            gh issue edit "$ISSUE_NUMBER" --remove-label "provider-override:$OVERRIDE" 2>/dev/null || true
+          else
+            echo "provider=$PRIMARY" >> "$GITHUB_OUTPUT"
+            echo "Primary provider: $PRIMARY"
+          fi
+
+      - name: Spec linter
+        id: spec
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ inputs.issue-number }}
+          MIN_BODY: ${{ steps.config.outputs.min_body }}
+          REQUIRED_SECTIONS: ${{ steps.config.outputs.required_sections }}
+        run: |
+          BODY=$(gh issue view "$ISSUE_NUMBER" --json body --jq '.body')
+          BODY_LENGTH=${#BODY}
+          ERRORS=""
+
+          # Check minimum body length
+          if [ "$BODY_LENGTH" -lt "$MIN_BODY" ]; then
+            ERRORS="$ERRORS- Body too short (${BODY_LENGTH} chars, minimum: ${MIN_BODY})\n"
+          fi
+
+          # Check required sections
+          IFS='|' read -ra SECTIONS <<< "$REQUIRED_SECTIONS"
+          for section in "${SECTIONS[@]}"; do
+            if ! echo "$BODY" | grep -qiE "^#{1,3} *${section}"; then
+              ERRORS="$ERRORS- Missing required section: **${section}**\n"
+            fi
+          done
+
+          if [ -n "$ERRORS" ]; then
+            echo "valid=false" >> "$GITHUB_OUTPUT"
+            COMMENT=$(printf "⚠️ **Spec Linter**: Issue doesn't meet agent requirements.\n\n%b\nFix the spec and re-add \`status:ready\`." "$ERRORS")
+            gh issue comment "$ISSUE_NUMBER" --body "$COMMENT"
+            gh issue edit "$ISSUE_NUMBER" --remove-label "status:ready" --add-label "status:spec-invalid" 2>/dev/null || true
+          else
+            echo "valid=true" >> "$GITHUB_OUTPUT"
+            echo "Spec OK (${BODY_LENGTH} chars)"
+          fi
+
+      - name: Skip — manual mode
+        if: steps.config.outputs.autonomy == 'manual-stages' && steps.spec.outputs.valid == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ inputs.issue-number }}
+        run: |
+          gh issue comment "$ISSUE_NUMBER" --body "🟢 **Pipeline**: Issue ready. Autonomy is \`manual-stages\` — assign agent manually."
+
+      # ─── Provider: Copilot ───
+      - name: Assign Copilot
+        if: >
+          steps.spec.outputs.valid == 'true' &&
+          steps.config.outputs.auto_assign == 'true' &&
+          steps.config.outputs.autonomy != 'manual-stages' &&
+          steps.provider.outputs.provider == 'copilot'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_PAT_PORTAL: ${{ secrets.GH_PAT_PORTAL }}
+          ISSUE_NUMBER: ${{ inputs.issue-number }}
+          AGENT_USER: ${{ steps.config.outputs.copilot_user }}
+        run: |
+          TOKEN="${GH_PAT_PORTAL:-$GH_TOKEN}"
+          GH_TOKEN="$TOKEN" gh issue edit "$ISSUE_NUMBER" --add-assignee "$AGENT_USER" \
+            || echo "::warning::Failed to assign $AGENT_USER"
+
+      # ─── Provider: Codex ───
+      - name: Trigger Codex
+        if: >
+          steps.spec.outputs.valid == 'true' &&
+          steps.config.outputs.auto_assign == 'true' &&
+          steps.config.outputs.autonomy != 'manual-stages' &&
+          steps.provider.outputs.provider == 'codex'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ inputs.issue-number }}
+        run: |
+          gh workflow run codex-implement.yml \
+            -R "${{ github.repository }}" \
+            -f issue_number="$ISSUE_NUMBER" \
+            -f model="${{ steps.config.outputs.codex_model }}" \
+            -f effort="${{ steps.config.outputs.codex_effort }}" \
+            -f sandbox="${{ steps.config.outputs.codex_sandbox }}" \
+            -f prompt_template="${{ steps.config.outputs.codex_prompt }}"
+
+      # ─── Labels & Slack ───
+      - name: Update labels & notify
+        if: >
+          steps.spec.outputs.valid == 'true' &&
+          steps.config.outputs.auto_assign == 'true' &&
+          steps.config.outputs.autonomy != 'manual-stages'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ inputs.issue-number }}
+          PROVIDER: ${{ steps.provider.outputs.provider }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          gh issue edit "$ISSUE_NUMBER" \
+            --remove-label "status:ready" \
+            --add-label "status:in-progress"
+
+          TITLE=$(gh issue view "$ISSUE_NUMBER" --json title --jq '.title')
+
+          if [ "$PROVIDER" = "copilot" ]; then
+            gh issue comment "$ISSUE_NUMBER" --body "🤖 **Pipeline**: Copilot assigned."
+            EMOJI="🤖"
+          elif [ "$PROVIDER" = "codex" ]; then
+            gh issue comment "$ISSUE_NUMBER" --body "🧠 **Pipeline**: Codex dispatched (model: ${{ steps.config.outputs.codex_model }})."
+            EMOJI="🧠"
+          else
+            gh issue comment "$ISSUE_NUMBER" --body "⚠️ **Pipeline**: Unknown provider \`$PROVIDER\`."
+            EMOJI="⚠️"
+          fi
+
+          if [ -n "${SLACK_WEBHOOK_URL:-}" ]; then
+            SLUG="${PROVIDER^}"
+            SLACK_MSG="${EMOJI} *${SLUG} asignado* a <https://github.com/${{ github.repository }}/issues/${ISSUE_NUMBER}|#${ISSUE_NUMBER}>: ${TITLE}"
+            curl -sf -X POST "$SLACK_WEBHOOK_URL" \
+              -H "Content-Type: application/json" \
+              -d "{\"text\": $(echo "$SLACK_MSG" | jq -Rs .)}" || true
+          fi

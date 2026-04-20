@@ -1,0 +1,119 @@
+name: On Issue Close — Check Wave Completion
+
+# Reusable workflow: when an issue closes, check if its wave is complete.
+# If wave gate is required, notify the gate issue.
+# If not, directly unblock the next wave.
+
+on:
+  workflow_call:
+    inputs:
+      closed-issue:
+        description: "Issue number that was closed"
+        type: string
+        required: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  unblock:
+    name: Check wave completion
+    runs-on: ubuntu-latest
+    concurrency:
+      group: wave-completion-check
+      cancel-in-progress: false
+    permissions:
+      issues: write
+      contents: read
+
+    steps:
+      - name: Checkout (caller's repo)
+        uses: actions/checkout@v4
+
+      - name: Process dependencies
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CLOSED_ISSUE: ${{ inputs.closed-issue }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          set -euo pipefail
+          CONFIG=".github/pipeline-config.json"
+          WAVE_GATE_REQUIRED=$(jq -r '.autonomy.waveGateRequired' "$CONFIG")
+
+          # Find which wave the closed issue belongs to
+          CLOSED_WAVE=""
+          for wave in $(jq -r '.waves | keys[]' "$CONFIG"); do
+            if jq -e ".waves[\"$wave\"] | index($CLOSED_ISSUE)" "$CONFIG" > /dev/null 2>&1; then
+              CLOSED_WAVE="$wave"
+              break
+            fi
+          done
+
+          if [ -z "$CLOSED_WAVE" ]; then
+            echo "Issue #$CLOSED_ISSUE not in any wave. Skipping."
+            exit 0
+          fi
+
+          echo "Issue #$CLOSED_ISSUE belongs to Wave $CLOSED_WAVE"
+
+          # Check if ALL issues in this wave are closed
+          WAVE_ISSUES=$(jq -r ".waves[\"$CLOSED_WAVE\"][]" "$CONFIG")
+          ALL_CLOSED=true
+          for issue_num in $WAVE_ISSUES; do
+            STATE=$(gh issue view "$issue_num" --json state --jq '.state')
+            if [ "$STATE" != "CLOSED" ]; then
+              echo "  #$issue_num is still $STATE"
+              ALL_CLOSED=false
+            else
+              echo "  #$issue_num is CLOSED ✓"
+            fi
+          done
+
+          if [ "$ALL_CLOSED" != "true" ]; then
+            echo "Wave $CLOSED_WAVE not yet complete."
+            exit 0
+          fi
+
+          echo "🎉 Wave $CLOSED_WAVE COMPLETE!"
+
+          # Slack: wave completed
+          WAVE_ISSUE_COUNT=$(echo "$WAVE_ISSUES" | wc -w | tr -d ' ')
+          REPO_NAME=$(basename "${{ github.repository }}")
+          if [ -n "${SLACK_WEBHOOK_URL:-}" ]; then
+            curl -sf -X POST "$SLACK_WEBHOOK_URL" \
+              -H "Content-Type: application/json" \
+              -d "{\"text\": \"🎉 *Wave $CLOSED_WAVE completada* — $WAVE_ISSUE_COUNT issues cerrados en \`$REPO_NAME\`\"}" || true
+          fi
+
+          # Next wave
+          NEXT_WAVE=$((CLOSED_WAVE + 1))
+          if ! jq -e ".waves[\"$NEXT_WAVE\"]" "$CONFIG" > /dev/null 2>&1; then
+            echo "No more waves. Project complete! 🎊"
+            exit 0
+          fi
+
+          NEXT_ISSUES=$(jq -r ".waves[\"$NEXT_WAVE\"][]" "$CONFIG")
+
+          if [ "$WAVE_GATE_REQUIRED" = "true" ]; then
+            GATE_ISSUE=$(jq -r ".waveGates[\"$CLOSED_WAVE\"] // empty" "$CONFIG")
+            if [ -n "$GATE_ISSUE" ] && [ "$GATE_ISSUE" != "null" ]; then
+              # Skip if gate already approved
+              if gh issue view "$GATE_ISSUE" --json labels --jq '[.labels[].name]' | grep -q "gate:approved"; then
+                echo "Gate #$GATE_ISSUE already approved. Skipping."
+                exit 0
+              fi
+
+              NEXT_LIST=$(echo $NEXT_ISSUES | tr ' ' ', ' | sed 's/,/, #/g; s/^/#/')
+              BODY="✅ **Wave $CLOSED_WAVE complete!**"
+              BODY="$BODY"$'\n\n'"Next wave (Wave $NEXT_WAVE): $NEXT_LIST"
+              BODY="$BODY"$'\n\n'"Review, test, then add \`gate:approved\` label to unlock."
+              gh issue comment "$GATE_ISSUE" --body "$BODY"
+            fi
+          else
+            echo "No wave gate. Unblocking Wave $NEXT_WAVE..."
+            for issue_num in $NEXT_ISSUES; do
+              gh issue edit "$issue_num" \
+                --remove-label "status:blocked" \
+                --add-label "status:ready" 2>/dev/null || true
+            done
+          fi

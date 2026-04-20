@@ -1,0 +1,95 @@
+name: Agent Retry — Fallback on Failure
+
+# Reusable workflow: when an agent fails (status:failed), retry with fallback.
+# Tracks retry count via labels. Alternates primary/fallback providers.
+# After maxRetries, adds needs-human label.
+
+on:
+  workflow_call:
+    inputs:
+      issue-number:
+        description: "Issue number that received status:failed"
+        type: string
+        required: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  retry:
+    name: Evaluate retry
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      contents: read
+
+    steps:
+      - name: Checkout (caller's repo)
+        uses: actions/checkout@v4
+
+      - name: Evaluate and retry
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ inputs.issue-number }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          set -euo pipefail
+          CONFIG=".github/pipeline-config.json"
+
+          PRIMARY=$(jq -r '.agent.primary // .agent.provider // "copilot"' "$CONFIG")
+          FALLBACK=$(jq -r '.agent.fallback // empty' "$CONFIG")
+          MAX_RETRIES=$(jq -r '.agent.maxRetries // 2' "$CONFIG")
+
+          # Count existing retries from labels
+          RETRY_COUNT=$(gh issue view "$ISSUE_NUMBER" --json labels --jq '[.labels[].name | select(startswith("retry:"))] | length')
+          NEXT_RETRY=$((RETRY_COUNT + 1))
+
+          echo "Issue #$ISSUE_NUMBER — retry $NEXT_RETRY of $MAX_RETRIES"
+          echo "Primary: $PRIMARY, Fallback: $FALLBACK"
+
+          if [ "$NEXT_RETRY" -gt "$MAX_RETRIES" ]; then
+            echo "Max retries exceeded. Escalating to human."
+            gh issue edit "$ISSUE_NUMBER" \
+              --remove-label "status:failed" \
+              --add-label "needs-human" 2>/dev/null || true
+            gh issue comment "$ISSUE_NUMBER" --body "🚨 **Pipeline**: Max retries ($MAX_RETRIES) exceeded. Manual intervention required."
+
+            if [ -n "${SLACK_WEBHOOK_URL:-}" ]; then
+              TITLE=$(gh issue view "$ISSUE_NUMBER" --json title --jq '.title')
+              curl -sf -X POST "$SLACK_WEBHOOK_URL" \
+                -H "Content-Type: application/json" \
+                -d "{\"text\": \"🚨 *Agente falló $MAX_RETRIES veces* en <https://github.com/${{ github.repository }}/issues/${ISSUE_NUMBER}|#${ISSUE_NUMBER}>: ${TITLE} — se requiere intervención manual\"}" || true
+            fi
+            exit 0
+          fi
+
+          # Determine next provider: alternate primary/fallback
+          if [ -n "$FALLBACK" ] && [ "$FALLBACK" != "null" ]; then
+            if [ $((NEXT_RETRY % 2)) -eq 1 ]; then
+              NEXT_PROVIDER="$FALLBACK"
+            else
+              NEXT_PROVIDER="$PRIMARY"
+            fi
+          else
+            NEXT_PROVIDER="$PRIMARY"
+          fi
+
+          echo "Retrying with provider: $NEXT_PROVIDER"
+
+          # Track retry and set override
+          gh issue edit "$ISSUE_NUMBER" \
+            --remove-label "status:failed" \
+            --add-label "retry:${NEXT_RETRY}" \
+            --add-label "provider-override:${NEXT_PROVIDER}" 2>/dev/null || true
+
+          gh issue comment "$ISSUE_NUMBER" --body "🔄 **Pipeline**: Retry $NEXT_RETRY/$MAX_RETRIES — switching to \`$NEXT_PROVIDER\`."
+
+          # Re-trigger assign-agent by adding status:ready
+          gh issue edit "$ISSUE_NUMBER" --add-label "status:ready" 2>/dev/null || true
+
+          if [ -n "${SLACK_WEBHOOK_URL:-}" ]; then
+            TITLE=$(gh issue view "$ISSUE_NUMBER" --json title --jq '.title')
+            curl -sf -X POST "$SLACK_WEBHOOK_URL" \
+              -H "Content-Type: application/json" \
+              -d "{\"text\": \"🔄 *Retry $NEXT_RETRY* con \`$NEXT_PROVIDER\` en <https://github.com/${{ github.repository }}/issues/${ISSUE_NUMBER}|#${ISSUE_NUMBER}>: ${TITLE}\"}" || true
+          fi
