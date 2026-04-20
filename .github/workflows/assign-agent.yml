@@ -173,7 +173,7 @@ jobs:
           TITLE=$(gh issue view "$ISSUE_NUMBER" --json title --jq '.title')
 
           if [ "$PROVIDER" = "copilot" ]; then
-            gh issue comment "$ISSUE_NUMBER" --body "🤖 **Pipeline**: Routing to Copilot.\n\n@copilot please implement this issue according to the specification in the issue body, create a branch, and open a PR to main."
+            gh issue comment "$ISSUE_NUMBER" --body "🤖 **Pipeline**: Routing to Copilot.\n\n@copilot please implement this issue according to the specification in the issue body, create a branch, and open a PR to main. Important: include \`Closes #$ISSUE_NUMBER\` in the PR body so issue automation can continue the wave pipeline."
             EMOJI="🤖"
           elif [ "$PROVIDER" = "codex" ]; then
             gh issue comment "$ISSUE_NUMBER" --body "🧠 **Pipeline**: Codex dispatched (model: ${{ steps.config.outputs.codex_model }})."
