@@ -1,0 +1,169 @@
+name: Gate Orchestrator
+
+# Reusable workflow that centralizes gate logic for both triggers:
+# - issue-closed: checks wave completion and requests gate approval or unlocks next wave
+# - gate-approved: unlocks next wave and closes gate issue
+
+on:
+  workflow_call:
+    inputs:
+      mode:
+        description: "Execution mode: issue-closed or gate-approved"
+        type: string
+        required: true
+      issue-number:
+        description: "Issue number to process (closed issue or gate issue depending on mode)"
+        type: string
+        required: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  orchestrate:
+    name: Run gate orchestration
+    runs-on: ubuntu-latest
+    concurrency:
+      group: gate-orchestrator-${{ github.repository }}
+      cancel-in-progress: false
+    permissions:
+      issues: write
+      contents: read
+
+    steps:
+      - name: Checkout (caller's repo)
+        uses: actions/checkout@v4
+
+      - name: Execute mode
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_PAT_PORTAL: ${{ secrets.GH_PAT_PORTAL }}
+          MODE: ${{ inputs.mode }}
+          ISSUE_NUMBER: ${{ inputs.issue-number }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          set -euo pipefail
+
+          CONFIG=".github/pipeline-config.json"
+          TOKEN="${GH_PAT_PORTAL:-$GH_TOKEN}"
+          REPO_NAME=$(basename "${{ github.repository }}")
+
+          if [ "$MODE" = "gate-approved" ]; then
+            GATE_ISSUE="$ISSUE_NUMBER"
+
+            GATE_WAVE=""
+            for wave in $(jq -r '.waveGates | keys[]' "$CONFIG"); do
+              GATE_NUM=$(jq -r ".waveGates[\"$wave\"] // empty" "$CONFIG")
+              if [ "$GATE_NUM" = "$GATE_ISSUE" ]; then
+                GATE_WAVE="$wave"
+                break
+              fi
+            done
+
+            if [ -z "$GATE_WAVE" ]; then
+              TITLE=$(gh issue view "$GATE_ISSUE" --json title --jq '.title')
+              GATE_WAVE=$(echo "$TITLE" | grep -oP 'Wave \K\d+' || true)
+            fi
+
+            if [ -z "$GATE_WAVE" ]; then
+              echo "::error::Cannot determine wave for gate issue #$GATE_ISSUE"
+              exit 1
+            fi
+
+            NEXT_WAVE=$((GATE_WAVE + 1))
+            if ! jq -e ".waves[\"$NEXT_WAVE\"]" "$CONFIG" > /dev/null 2>&1; then
+              GH_TOKEN="$TOKEN" gh issue comment "$GATE_ISSUE" --body "🎊 **All waves complete!** No more issues to unlock."
+              exit 0
+            fi
+
+            NEXT_ISSUES=$(jq -r ".waves[\"$NEXT_WAVE\"][]" "$CONFIG")
+            UNLOCKED=""
+
+            for issue_num in $NEXT_ISSUES; do
+              GH_TOKEN="$TOKEN" gh issue edit "$issue_num" \
+                --remove-label "status:blocked" \
+                --add-label "status:ready" 2>/dev/null || true
+              UNLOCKED="$UNLOCKED #$issue_num"
+            done
+
+            if [ -n "${SLACK_WEBHOOK_URL:-}" ]; then
+              ISSUE_COUNT=$(echo $UNLOCKED | wc -w | tr -d ' ')
+              MSG="🚀 *Wave $NEXT_WAVE desbloqueada* — $ISSUE_COUNT issues listos para agentes en \`$REPO_NAME\`"
+              curl -sf -X POST "$SLACK_WEBHOOK_URL" \
+                -H "Content-Type: application/json" \
+                -d "{\"text\": $(echo "$MSG" | jq -Rs .)}" || true
+            fi
+
+            GH_TOKEN="$TOKEN" gh issue comment "$GATE_ISSUE" --body "🚀 **Wave $NEXT_WAVE unlocked!** Issues now ready:$UNLOCKED"
+            GH_TOKEN="$TOKEN" gh issue close "$GATE_ISSUE" --reason completed
+            exit 0
+          fi
+
+          if [ "$MODE" = "issue-closed" ]; then
+            CLOSED_ISSUE="$ISSUE_NUMBER"
+            WAVE_GATE_REQUIRED=$(jq -r '.autonomy.waveGateRequired' "$CONFIG")
+
+            CLOSED_WAVE=""
+            for wave in $(jq -r '.waves | keys[]' "$CONFIG"); do
+              if jq -e ".waves[\"$wave\"] | index($CLOSED_ISSUE)" "$CONFIG" > /dev/null 2>&1; then
+                CLOSED_WAVE="$wave"
+                break
+              fi
+            done
+
+            if [ -z "$CLOSED_WAVE" ]; then
+              echo "Issue #$CLOSED_ISSUE not in any wave."
+              exit 0
+            fi
+
+            WAVE_ISSUES=$(jq -r ".waves[\"$CLOSED_WAVE\"][]" "$CONFIG")
+            ALL_CLOSED=true
+
+            for issue_num in $WAVE_ISSUES; do
+              STATE=$(gh issue view "$issue_num" --json state --jq '.state')
+              if [ "$STATE" != "CLOSED" ]; then
+                ALL_CLOSED=false
+              fi
+            done
+
+            if [ "$ALL_CLOSED" != "true" ]; then
+              exit 0
+            fi
+
+            NEXT_WAVE=$((CLOSED_WAVE + 1))
+            if ! jq -e ".waves[\"$NEXT_WAVE\"]" "$CONFIG" > /dev/null 2>&1; then
+              exit 0
+            fi
+
+            NEXT_ISSUES=$(jq -r ".waves[\"$NEXT_WAVE\"][]" "$CONFIG")
+
+            if [ "$WAVE_GATE_REQUIRED" = "true" ]; then
+              GATE_ISSUE=$(jq -r ".waveGates[\"$CLOSED_WAVE\"] // empty" "$CONFIG")
+              if [ -n "$GATE_ISSUE" ] && [ "$GATE_ISSUE" != "null" ]; then
+                NEXT_LIST=$(echo $NEXT_ISSUES | tr ' ' ', ' | sed 's/,/, #/g; s/^/#/')
+                BODY="✅ **Wave $CLOSED_WAVE complete!**"
+                BODY="$BODY"$'\n\n'"Next wave (Wave $NEXT_WAVE): $NEXT_LIST"
+                BODY="$BODY"$'\n\n'"Review, test, then add \`gate:approved\` label to unlock."
+                GH_TOKEN="$TOKEN" gh issue comment "$GATE_ISSUE" --body "$BODY"
+
+                if [ -n "${SLACK_WEBHOOK_URL:-}" ]; then
+                  GATE_URL="https://github.com/${{ github.repository }}/issues/${GATE_ISSUE}"
+                  MSG="🟡 *Action required*: Wave $CLOSED_WAVE is complete in \`$REPO_NAME\`. Approve gate <${GATE_URL}|#${GATE_ISSUE}> with label \`gate:approved\` to unlock Wave $NEXT_WAVE."
+                  curl -sf -X POST "$SLACK_WEBHOOK_URL" \
+                    -H "Content-Type: application/json" \
+                    -d "{\"text\": $(echo "$MSG" | jq -Rs .)}" || true
+                fi
+              fi
+            else
+              for issue_num in $NEXT_ISSUES; do
+                GH_TOKEN="$TOKEN" gh issue edit "$issue_num" \
+                  --remove-label "status:blocked" \
+                  --add-label "status:ready" 2>/dev/null || true
+              done
+            fi
+
+            exit 0
+          fi
+
+          echo "::error::Unsupported mode: $MODE"
+          exit 1

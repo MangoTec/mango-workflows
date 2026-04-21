@@ -1,7 +1,7 @@
 name: Wave Gate — Unlock Next Wave
 
-# Reusable workflow: when gate:approved label is added, unlock next wave.
-# Reads wave config from caller's pipeline-config.json.
+# Reusable workflow wrapper: when gate:approved label is added,
+# delegate to unified gate orchestrator.
 
 on:
   workflow_call:
@@ -15,80 +15,9 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
-  unlock:
-    name: Unlock next wave
-    runs-on: ubuntu-latest
-    permissions:
-      issues: write
-      contents: read
-
-    steps:
-      - name: Checkout (caller's repo)
-        uses: actions/checkout@v4
-
-      - name: Unlock next wave issues
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_PAT_PORTAL: ${{ secrets.GH_PAT_PORTAL }}
-          GATE_ISSUE: ${{ inputs.gate-issue }}
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-        run: |
-          set -euo pipefail
-          CONFIG=".github/pipeline-config.json"
-          TOKEN="${GH_PAT_PORTAL:-$GH_TOKEN}"
-
-          # Find which wave this gate belongs to
-          GATE_WAVE=""
-          for wave in $(jq -r '.waveGates | keys[]' "$CONFIG"); do
-            GATE_NUM=$(jq -r ".waveGates[\"$wave\"] // empty" "$CONFIG")
-            if [ "$GATE_NUM" = "$GATE_ISSUE" ]; then
-              GATE_WAVE="$wave"
-              break
-            fi
-          done
-
-          # Fallback: extract wave from issue title
-          if [ -z "$GATE_WAVE" ]; then
-            TITLE=$(gh issue view "$GATE_ISSUE" --json title --jq '.title')
-            GATE_WAVE=$(echo "$TITLE" | grep -oP 'Wave \K\d+' || true)
-          fi
-
-          if [ -z "$GATE_WAVE" ]; then
-            echo "::error::Cannot determine wave for gate issue #$GATE_ISSUE"
-            exit 1
-          fi
-
-          echo "Gate approved for Wave $GATE_WAVE"
-          NEXT_WAVE=$((GATE_WAVE + 1))
-
-          if ! jq -e ".waves[\"$NEXT_WAVE\"]" "$CONFIG" > /dev/null 2>&1; then
-            echo "No Wave $NEXT_WAVE. All waves complete! 🎊"
-            gh issue comment "$GATE_ISSUE" --body "🎊 **All waves complete!** No more issues to unlock."
-            exit 0
-          fi
-
-          NEXT_ISSUES=$(jq -r ".waves[\"$NEXT_WAVE\"][]" "$CONFIG")
-          UNLOCKED=""
-
-          for issue_num in $NEXT_ISSUES; do
-            echo "Unblocking #$issue_num → status:ready"
-            GH_TOKEN="$TOKEN" gh issue edit "$issue_num" \
-              --remove-label "status:blocked" \
-              --add-label "status:ready" 2>/dev/null || true
-            UNLOCKED="$UNLOCKED #$issue_num"
-          done
-
-          echo "✅ Wave $NEXT_WAVE unlocked: $UNLOCKED"
-
-          # Slack notification
-          ISSUE_COUNT=$(echo $UNLOCKED | wc -w | tr -d ' ')
-          REPO_NAME=$(basename "${{ github.repository }}")
-          if [ -n "${SLACK_WEBHOOK_URL:-}" ]; then
-            SLACK_MSG="🚀 *Wave $NEXT_WAVE desbloqueada* — $ISSUE_COUNT issues listos para agentes en \`$REPO_NAME\`"
-            curl -sf -X POST "$SLACK_WEBHOOK_URL" \
-              -H "Content-Type: application/json" \
-              -d "{\"text\": \"$SLACK_MSG\"}" || true
-          fi
-
-          GH_TOKEN="$TOKEN" gh issue comment "$GATE_ISSUE" --body "🚀 **Wave $NEXT_WAVE unlocked!** Issues now ready:$UNLOCKED"
-          GH_TOKEN="$TOKEN" gh issue close "$GATE_ISSUE" --reason completed
+  orchestrate:
+    uses: ./.github/workflows/gate-orchestrator.yml
+    with:
+      mode: gate-approved
+      issue-number: ${{ inputs.gate-issue }}
+    secrets: inherit
