@@ -1,0 +1,226 @@
+name: Wave Ready — Create Consolidated PR
+
+# Reusable workflow: when all task PRs in a wave are green,
+# create or refresh the wave-N/consolidate PR and notify Slack.
+
+on:
+  workflow_call:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  sync-wave-pr:
+    name: Sync consolidated wave PR
+    runs-on: ubuntu-latest
+    concurrency:
+      group: wave-ready-${{ github.repository }}
+      cancel-in-progress: false
+    permissions:
+      issues: write
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout (caller's repo)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create or update consolidated PRs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_PAT_PORTAL: ${{ secrets.GH_PAT_PORTAL }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          set -euo pipefail
+
+          CONFIG=".github/pipeline-config.json"
+          TOKEN="${GH_PAT_PORTAL:-$GH_TOKEN}"
+          REPO="${{ github.repository }}"
+          REPO_NAME=$(basename "$REPO")
+
+          gh_auth() {
+            GH_TOKEN="$TOKEN" gh "$@"
+          }
+
+          notify_slack() {
+            local message="$1"
+
+            if [ -z "${SLACK_WEBHOOK_URL:-}" ]; then
+              return 0
+            fi
+
+            curl -sf -X POST "$SLACK_WEBHOOK_URL" \
+              -H "Content-Type: application/json" \
+              -d "{\"text\": $(echo "$message" | jq -Rs .)}" >/dev/null || true
+          }
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin main --prune
+
+          OPEN_PRS_JSON=$(gh_auth pr list --state open --limit 200 \
+            --json number,title,headRefName,baseRefName,isDraft,url,mergeStateStatus,closingIssuesReferences,statusCheckRollup)
+
+          mapfile -t WAVES < <(jq -r '.waves | keys[]' "$CONFIG" | sort -n)
+
+          for WAVE in "${WAVES[@]}"; do
+            CONSOLIDATED_BRANCH="wave-${WAVE}/consolidate"
+            NEXT_WAVE=$((WAVE + 1))
+            GATE_ISSUE=$(jq -r ".waveGates[\"$WAVE\"] // empty" "$CONFIG")
+
+            if gh_auth pr list --head "$CONSOLIDATED_BRANCH" --base main --state merged --json number --jq 'length > 0' | grep -q true; then
+              echo "Wave $WAVE already merged via $CONSOLIDATED_BRANCH"
+              continue
+            fi
+
+            if [ -n "$GATE_ISSUE" ] && [ "$GATE_ISSUE" != "null" ]; then
+              GATE_STATE=$(gh_auth issue view "$GATE_ISSUE" --json state --jq '.state')
+              if [ "$GATE_STATE" = "CLOSED" ]; then
+                echo "Gate #$GATE_ISSUE already closed for wave $WAVE"
+                continue
+              fi
+            fi
+
+            mapfile -t ISSUE_NUMBERS < <(jq -r ".waves[\"$WAVE\"][]" "$CONFIG")
+
+            if [ "${#ISSUE_NUMBERS[@]}" -eq 0 ]; then
+              continue
+            fi
+
+            declare -a CHILD_ISSUES=()
+            declare -a CHILD_PRS=()
+            declare -a CHILD_REFS=()
+            declare -a CHILD_URLS=()
+            declare -a CHILD_TITLES=()
+
+            WAVE_READY=true
+
+            for ISSUE_NUMBER in "${ISSUE_NUMBERS[@]}"; do
+              PR_JSON=$(jq -c --argjson issue "$ISSUE_NUMBER" '
+                [ .[]
+                  | select(.baseRefName == "main")
+                  | select((.headRefName | startswith("wave-")) | not)
+                  | select(any(.closingIssuesReferences[]?; .number == $issue))
+                ]
+                | sort_by(.number)
+                | last // empty
+              ' <<< "$OPEN_PRS_JSON")
+
+              if [ -z "$PR_JSON" ] || [ "$PR_JSON" = "null" ]; then
+                echo "Wave $WAVE not ready: missing open PR for issue #$ISSUE_NUMBER"
+                WAVE_READY=false
+                break
+              fi
+
+              TOTAL_CHECKS=$(jq '[.statusCheckRollup[]?] | length' <<< "$PR_JSON")
+              SUCCESSFUL_CHECKS=$(jq '[.statusCheckRollup[]? | select(.status == "COMPLETED" and .conclusion == "SUCCESS")] | length' <<< "$PR_JSON")
+
+              if [ "$TOTAL_CHECKS" -eq 0 ] || [ "$SUCCESSFUL_CHECKS" -ne "$TOTAL_CHECKS" ]; then
+                echo "Wave $WAVE not ready: PR checks not green for issue #$ISSUE_NUMBER"
+                WAVE_READY=false
+                break
+              fi
+
+              CHILD_ISSUES+=("$ISSUE_NUMBER")
+              CHILD_PRS+=("$(jq -r '.number' <<< "$PR_JSON")")
+              CHILD_REFS+=("$(jq -r '.headRefName' <<< "$PR_JSON")")
+              CHILD_URLS+=("$(jq -r '.url' <<< "$PR_JSON")")
+              CHILD_TITLES+=("$(jq -r '.title' <<< "$PR_JSON")")
+            done
+
+            if [ "$WAVE_READY" != "true" ]; then
+              continue
+            fi
+
+            echo "Wave $WAVE is ready for consolidation (${#CHILD_REFS[@]} PRs)"
+
+            REMOTE_BRANCH_EXISTS=false
+            if [ -n "$(git ls-remote --heads origin "$CONSOLIDATED_BRANCH")" ]; then
+              REMOTE_BRANCH_EXISTS=true
+              git fetch origin "$CONSOLIDATED_BRANCH"
+            fi
+
+            git checkout -B "$CONSOLIDATED_BRANCH" origin/main
+
+            for index in "${!CHILD_REFS[@]}"; do
+              REF_NAME="${CHILD_REFS[$index]}"
+              ISSUE_NUMBER="${CHILD_ISSUES[$index]}"
+              PR_NUMBER="${CHILD_PRS[$index]}"
+
+              echo "Merging $REF_NAME (PR #$PR_NUMBER, issue #$ISSUE_NUMBER)"
+              git fetch origin "$REF_NAME"
+
+              if ! git merge --no-ff --no-edit FETCH_HEAD; then
+                git merge --abort || true
+
+                CONFLICT_MESSAGE="🔴 *Wave $WAVE no pudo consolidarse* en \`$REPO_NAME\`: conflicto al mergear <${CHILD_URLS[$index]}|PR #$PR_NUMBER> para issue #$ISSUE_NUMBER."
+                notify_slack "$CONFLICT_MESSAGE"
+
+                if [ -n "$GATE_ISSUE" ] && [ "$GATE_ISSUE" != "null" ]; then
+                  gh_auth issue comment "$GATE_ISSUE" --body "⚠️ **Wave $WAVE consolidation failed** due to a merge conflict while applying PR #$PR_NUMBER for issue #$ISSUE_NUMBER. Resolve the child PR conflict and rerun the workflow."
+                fi
+
+                exit 1
+              fi
+            done
+
+            BODY_FILE=$(mktemp)
+            {
+              echo "## Wave $WAVE Consolidation"
+              echo
+              echo "This PR consolidates the completed task PRs for wave $WAVE into a single review point."
+              echo
+              echo "### Included task PRs"
+              for index in "${!CHILD_REFS[@]}"; do
+                echo "- Closes #${CHILD_ISSUES[$index]}: ${CHILD_TITLES[$index]} ([#${CHILD_PRS[$index]}](${CHILD_URLS[$index]}))"
+              done
+              echo
+              echo "### Automation"
+              echo "- Merging this PR closes the wave issues."
+
+              if jq -e ".waves[\"$NEXT_WAVE\"]" "$CONFIG" >/dev/null 2>&1; then
+                echo "- Merging this PR auto-approves the wave gate and starts wave $NEXT_WAVE."
+              else
+                echo "- Merging this PR completes the final wave in the pipeline."
+              fi
+            } > "$BODY_FILE"
+
+            OPEN_WAVE_PR_NUMBER=$(gh_auth pr list --head "$CONSOLIDATED_BRANCH" --base main --state open --json number --jq '.[0].number // empty')
+            PR_CREATED=false
+
+            if [ "$REMOTE_BRANCH_EXISTS" = true ] && git diff --quiet "origin/$CONSOLIDATED_BRANCH...HEAD"; then
+              echo "No content changes detected for $CONSOLIDATED_BRANCH"
+            else
+              git push origin "$CONSOLIDATED_BRANCH" --force-with-lease
+            fi
+
+            TITLE="feat(wave-$WAVE): consolidate ${#CHILD_REFS[@]} completed tasks"
+
+            if [ -n "$OPEN_WAVE_PR_NUMBER" ]; then
+              gh_auth pr edit "$OPEN_WAVE_PR_NUMBER" --title "$TITLE" --body-file "$BODY_FILE"
+            else
+              gh_auth pr create --base main --head "$CONSOLIDATED_BRANCH" --title "$TITLE" --body-file "$BODY_FILE"
+              PR_CREATED=true
+            fi
+
+            WAVE_PR_NUMBER=$(gh_auth pr list --head "$CONSOLIDATED_BRANCH" --base main --state open --json number,url --jq '.[0].number // empty')
+            WAVE_PR_URL=$(gh_auth pr list --head "$CONSOLIDATED_BRANCH" --base main --state open --json number,url --jq '.[0].url // empty')
+
+            if [ "$PR_CREATED" = true ]; then
+              if [ -n "$GATE_ISSUE" ] && [ "$GATE_ISSUE" != "null" ]; then
+                gh_auth issue comment "$GATE_ISSUE" --body "🧪 **Wave $WAVE is ready for review.** Consolidated PR: <${WAVE_PR_URL}|#${WAVE_PR_NUMBER}>. Merge this PR to auto-approve the gate and start wave $NEXT_WAVE."
+              fi
+
+              if jq -e ".waves[\"$NEXT_WAVE\"]" "$CONFIG" >/dev/null 2>&1; then
+                SLACK_MESSAGE="🟢 *Wave $WAVE lista para revisión* en \`$REPO_NAME\`: <${WAVE_PR_URL}|PR #${WAVE_PR_NUMBER}> consolida ${#CHILD_REFS[@]} tareas. Al mergearse, arranca wave $NEXT_WAVE automáticamente."
+              else
+                SLACK_MESSAGE="🟢 *Wave $WAVE lista para revisión* en \`$REPO_NAME\`: <${WAVE_PR_URL}|PR #${WAVE_PR_NUMBER}> consolida ${#CHILD_REFS[@]} tareas. Al mergearse, termina la pipeline."
+              fi
+
+              notify_slack "$SLACK_MESSAGE"
+            fi
+
+            rm -f "$BODY_FILE"
+          done
