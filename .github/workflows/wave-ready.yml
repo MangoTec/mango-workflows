@@ -36,13 +36,19 @@ jobs:
           set -euo pipefail
 
           CONFIG=".github/pipeline-config.json"
-          TOKEN="${GH_PAT_PORTAL:-$GH_TOKEN}"
+          # Use github.token for all gh CLI calls (has pull-requests:write permission)
+          # GH_PAT_PORTAL is only used to authenticate git push (set on remote URL)
+          TOKEN="${GH_TOKEN}"
           REPO="${{ github.repository }}"
           REPO_NAME=$(basename "$REPO")
 
           gh_auth() {
             GH_TOKEN="$TOKEN" gh "$@"
           }
+
+          # Configure git remote to use PAT for push (falls back to github.token)
+          PAT_FOR_PUSH="${GH_PAT_PORTAL:-$GH_TOKEN}"
+          git remote set-url origin "https://x-access-token:${PAT_FOR_PUSH}@github.com/${REPO}.git"
 
           notify_slack() {
             local message="$1"
