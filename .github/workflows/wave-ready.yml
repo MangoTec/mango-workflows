@@ -69,7 +69,7 @@ jobs:
           git fetch origin main --prune
 
           OPEN_PRS_JSON=$(gh_auth pr list --state open --limit 200 \
-            --json number,title,headRefName,baseRefName,isDraft,url,mergeStateStatus,closingIssuesReferences,statusCheckRollup)
+            --json number,title,headRefName,baseRefName,isDraft,url,mergeStateStatus,closingIssuesReferences)
 
           mapfile -t WAVES < <(jq -r '.waves | keys[]' "$CONFIG" | sort -n)
 
@@ -122,11 +122,10 @@ jobs:
                 break
               fi
 
-              TOTAL_CHECKS=$(jq '[.statusCheckRollup[]?] | length' <<< "$PR_JSON")
-              SUCCESSFUL_CHECKS=$(jq '[.statusCheckRollup[]? | select(.status == "COMPLETED" and .conclusion == "SUCCESS")] | length' <<< "$PR_JSON")
-
-              if [ "$TOTAL_CHECKS" -eq 0 ] || [ "$SUCCESSFUL_CHECKS" -ne "$TOTAL_CHECKS" ]; then
-                echo "Wave $WAVE not ready: PR checks not green for issue #$ISSUE_NUMBER"
+              # Use mergeStateStatus instead of statusCheckRollup (avoids GraphQL permission issues)
+              MERGE_STATE=$(jq -r '.mergeStateStatus' <<< "$PR_JSON")
+              if [ "$MERGE_STATE" != "CLEAN" ] && [ "$MERGE_STATE" != "HAS_HOOKS" ]; then
+                echo "Wave $WAVE not ready: PR checks not green for issue #$ISSUE_NUMBER (mergeStateStatus=$MERGE_STATE)"
                 WAVE_READY=false
                 break
               fi
