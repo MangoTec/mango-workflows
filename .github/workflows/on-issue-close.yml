@@ -110,6 +110,14 @@ jobs:
               BODY="$BODY"$'\n\n'"Next wave (Wave $NEXT_WAVE): $NEXT_LIST"
               BODY="$BODY"$'\n\n'"Review, test, then add \`gate:approved\` label to unlock."
               gh issue comment "$GATE_ISSUE" --body "$BODY"
+
+              if [ -n "${SLACK_WEBHOOK_URL:-}" ]; then
+                GATE_URL="https://github.com/${{ github.repository }}/issues/${GATE_ISSUE}"
+                MSG="🟡 *Action required*: Wave $CLOSED_WAVE is complete in \`$(basename "${{ github.repository }}")\`. Approve gate <${GATE_URL}|#${GATE_ISSUE}> with label \`gate:approved\` to unlock Wave $NEXT_WAVE."
+                curl -sf -X POST "$SLACK_WEBHOOK_URL" \
+                  -H "Content-Type: application/json" \
+                  -d "{\"text\": $(echo "$MSG" | jq -Rs .)}" || true
+              fi
             fi
           else
             echo "No wave gate. Unblocking Wave $NEXT_WAVE..."
