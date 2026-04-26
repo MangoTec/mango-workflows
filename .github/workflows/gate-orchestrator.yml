@@ -190,9 +190,9 @@ jobs:
               # v4: waves can be objects with .issues array, or v3 plain arrays
               IS_OBJECT=$(jq -r ".waves[\"$wave\"] | type" "$CONFIG")
               if [ "$IS_OBJECT" = "object" ]; then
-                MATCH=$(jq -e ".waves[\"$wave\"].issues | index($CLOSED_ISSUE)" "$CONFIG" 2>/dev/null && echo "yes" || echo "no")
+                MATCH=$(jq -e ".waves[\"$wave\"].issues | index($CLOSED_ISSUE)" "$CONFIG" >/dev/null 2>&1 && echo "yes" || echo "no")
               else
-                MATCH=$(jq -e ".waves[\"$wave\"] | index($CLOSED_ISSUE)" "$CONFIG" 2>/dev/null && echo "yes" || echo "no")
+                MATCH=$(jq -e ".waves[\"$wave\"] | index($CLOSED_ISSUE)" "$CONFIG" >/dev/null 2>&1 && echo "yes" || echo "no")
               fi
               if [ "$MATCH" = "yes" ]; then
                 CLOSED_WAVE="$wave"
