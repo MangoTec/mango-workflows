@@ -5,7 +5,7 @@
 set -euo pipefail
 
 # Resolve config file + mission id for an issue number
-# Scans missions directory for the issue
+# Scans .github/missions first, falling back to .github/pipeline-config.json.
 # Usage: cfg_resolve_for_issue MISSIONS_DIR ISSUE_NUM
 # Output (two lines): config_path, mission_id
 # Exit: 0 if found, 1 if not
@@ -14,14 +14,16 @@ cfg_resolve_for_issue() {
   # Source mission.sh relative to this lib
   local lib_dir
   lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  # shellcheck source=lib/mission.sh
   source "$lib_dir/mission.sh" 2>/dev/null || true
 
-  local mid
-  mid=$(mission_find_for_issue "$dir" "$issue")
-  if [ -z "$mid" ]; then
+  local config mid
+  config=$(mission_find_config_for_issue "$dir" "$issue")
+  if [ -z "$config" ]; then
     return 1
   fi
-  echo "$dir/$mid.json"
+  mid=$(mission_get_id "$config")
+  echo "$config"
   echo "$mid"
   return 0
 }
@@ -51,7 +53,7 @@ cfg_max_retries() {
 # Usage: cfg_copilot_user CONFIG_FILE
 cfg_copilot_user() {
   local config="$1"
-  jq -r '.providers.copilot.username // .copilot.username // "copilot"' "$config"
+  jq -r '.agent.providers.copilot.username // .providers.copilot.username // .copilot.username // "Copilot"' "$config"
 }
 
 # Spec linter: minimum body length
