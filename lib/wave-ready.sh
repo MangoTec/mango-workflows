@@ -437,23 +437,31 @@ for CONFIG in $(mission_list_active_configs "$MISSIONS_DIR"); do
       git fetch origin "$REF_NAME"
 
       if ! git merge --no-ff --no-edit FETCH_HEAD; then
+        # Copilot PRs target main, not the mission branch, so add/add conflicts
+        # are expected when wave N evolves files created in wave N-1.
+        # Retry with -X theirs to accept the PR's (newer) version.
+        echo "Merge conflict detected — retrying with -X theirs (accept PR version)"
         git merge --abort || true
 
-        RUN_URL="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-        CONFLICT_MESSAGE=$(printf '%s\n' \
-          "🔴 *Consolidación fallida en wave ${WAVE}*" \
-          "• Repo: \`${REPO_NAME}\`" \
-          "• PR en conflicto: <${CHILD_URLS[$index]}|#${PR_NUMBER}> (issue #${ISSUE_NUMBER})" \
-          "• Branch objetivo: \`${CONSOLIDATED_BRANCH}\`" \
-          "• Run: <${RUN_URL}|ver ejecución>" \
-          "• Acción: resolver conflicto en PR hija y relanzar workflow")
-        notify_slack "$CONFLICT_MESSAGE"
+        if ! git merge --no-ff --no-edit -X theirs FETCH_HEAD; then
+          git merge --abort || true
 
-        if [ -n "$GATE_ISSUE" ] && [ "$GATE_ISSUE" != "null" ]; then
-          gh_auth issue comment "$GATE_ISSUE" --body "⚠️ **Wave $WAVE consolidation failed** due to a merge conflict while applying PR #$PR_NUMBER for issue #$ISSUE_NUMBER. Resolve the child PR conflict and rerun the workflow."
+          RUN_URL="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          CONFLICT_MESSAGE=$(printf '%s\n' \
+            "🔴 *Consolidación fallida en wave ${WAVE}*" \
+            "• Repo: \`${REPO_NAME}\`" \
+            "• PR en conflicto: <${CHILD_URLS[$index]}|#${PR_NUMBER}> (issue #${ISSUE_NUMBER})" \
+            "• Branch objetivo: \`${CONSOLIDATED_BRANCH}\`" \
+            "• Run: <${RUN_URL}|ver ejecución>" \
+            "• Acción: resolver conflicto en PR hija y relanzar workflow")
+          notify_slack "$CONFLICT_MESSAGE"
+
+          if [ -n "$GATE_ISSUE" ] && [ "$GATE_ISSUE" != "null" ]; then
+            gh_auth issue comment "$GATE_ISSUE" --body "⚠️ **Wave $WAVE consolidation failed** due to a merge conflict while applying PR #$PR_NUMBER for issue #$ISSUE_NUMBER. Resolve the child PR conflict and rerun the workflow."
+          fi
+
+          exit 1
         fi
-
-        exit 1
       fi
     done
 
