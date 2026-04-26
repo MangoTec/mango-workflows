@@ -27,6 +27,13 @@ jobs:
       - name: Checkout (caller's repo)
         uses: actions/checkout@v4
 
+      - name: Checkout workflow libs
+        uses: actions/checkout@v4
+        with:
+          repository: MangoTec/mango-workflows
+          path: .mango-workflows
+          sparse-checkout: lib
+
       - name: Evaluate and retry
         env:
           GH_TOKEN: ${{ github.token }}
@@ -34,11 +41,21 @@ jobs:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
         run: |
           set -euo pipefail
-          CONFIG=".github/pipeline-config.json"
 
-          PRIMARY=$(jq -r '.agent.primary // .agent.provider // "copilot"' "$CONFIG")
-          FALLBACK=$(jq -r '.agent.fallback // empty' "$CONFIG")
-          MAX_RETRIES=$(jq -r '.agent.maxRetries // 2' "$CONFIG")
+          source .mango-workflows/lib/mission.sh
+          source .mango-workflows/lib/config.sh
+
+          MISSIONS_DIR=".github/missions"
+          RESOLVED=$(cfg_resolve_for_issue "$MISSIONS_DIR" "$ISSUE_NUMBER" 2>/dev/null) || {
+            echo "Issue #$ISSUE_NUMBER not found in any active mission — skipping retry"
+            exit 0
+          }
+          CONFIG=$(echo "$RESOLVED" | head -1)
+          MISSION_ID=$(echo "$RESOLVED" | tail -1)
+
+          PRIMARY=$(cfg_primary_provider "$CONFIG")
+          FALLBACK=$(cfg_fallback_provider "$CONFIG")
+          MAX_RETRIES=$(cfg_max_retries "$CONFIG")
 
           # Count existing retries from labels
           RETRY_COUNT=$(gh issue view "$ISSUE_NUMBER" --json labels --jq '[.labels[].name | select(startswith("retry:"))] | length')

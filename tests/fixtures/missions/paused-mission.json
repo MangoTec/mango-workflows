@@ -1,0 +1,22 @@
+{
+  "version": "5.0.0",
+  "mission": {
+    "id": "paused-mission",
+    "name": "Some paused work",
+    "baseBranch": "main",
+    "missionBranch": "mission/paused-mission",
+    "status": "paused"
+  },
+  "agent": {
+    "primary": "copilot",
+    "providers": {
+      "copilot": { "username": "copilot-swe-agent" }
+    }
+  },
+  "waves": {
+    "0": {
+      "issues": [301, 302],
+      "gate": "human"
+    }
+  }
+}

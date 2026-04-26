@@ -29,6 +29,13 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Checkout workflow libs
+        uses: actions/checkout@v4
+        with:
+          repository: MangoTec/mango-workflows
+          path: .mango-workflows
+          sparse-checkout: lib
+
       - name: Create or update consolidated PRs
         env:
           GH_TOKEN: ${{ github.token }}
@@ -37,7 +44,9 @@ jobs:
         run: |
           set -euo pipefail
 
-          CONFIG=".github/pipeline-config.json"
+          source .mango-workflows/lib/mission.sh
+
+          MISSIONS_DIR=".github/missions"
           # Use github.token for all gh CLI calls (has pull-requests:write permission)
           # GH_PAT_PORTAL is only used to authenticate git push (set on remote URL)
           TOKEN="${GH_TOKEN}"
@@ -66,19 +75,28 @@ jobs:
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git fetch origin main --prune
 
           OPEN_PRS_JSON=$(gh_auth pr list --state open --limit 200 \
             --json number,title,headRefName,baseRefName,isDraft,url,mergeStateStatus,closingIssuesReferences)
 
+          # Iterate over all active missions
+          for CONFIG in $(mission_list_active "$MISSIONS_DIR"); do
+            MISSION_ID=$(jq -r '.mission.id' "$CONFIG")
+            BASE_BRANCH=$(jq -r '.mission.baseBranch // "main"' "$CONFIG")
+            MISSION_BRANCH=$(jq -r '.mission.missionBranch // "mission/\(.mission.id)"' "$CONFIG")
+
+            echo "=== Processing mission: $MISSION_ID (base: $BASE_BRANCH, branch: $MISSION_BRANCH) ==="
+            git fetch origin "$BASE_BRANCH" --prune 2>/dev/null || true
+            git fetch origin "$MISSION_BRANCH" --prune 2>/dev/null || true
+
           mapfile -t WAVES < <(jq -r '.waves | keys[]' "$CONFIG" | sort -n)
 
           for WAVE in "${WAVES[@]}"; do
-            CONSOLIDATED_BRANCH="wave-${WAVE}/consolidate"
+            CONSOLIDATED_BRANCH="mission/${MISSION_ID}/wave-${WAVE}/consolidate"
             NEXT_WAVE=$((WAVE + 1))
             GATE_ISSUE=$(jq -r ".waveGates[\"$WAVE\"] // empty" "$CONFIG")
 
-            if gh_auth pr list --head "$CONSOLIDATED_BRANCH" --base main --state merged --json number --jq 'length > 0' | grep -q true; then
+            if gh_auth pr list --head "$CONSOLIDATED_BRANCH" --base "$MISSION_BRANCH" --state merged --json number --jq 'length > 0' | grep -q true; then
               echo "Wave $WAVE already merged via $CONSOLIDATED_BRANCH"
               continue
             fi
@@ -112,10 +130,10 @@ jobs:
             WAVE_READY=true
 
             for ISSUE_NUMBER in "${ISSUE_NUMBERS[@]}"; do
-              PR_JSON=$(jq -c --argjson issue "$ISSUE_NUMBER" '
+              PR_JSON=$(jq -c --argjson issue "$ISSUE_NUMBER" --arg base "$MISSION_BRANCH" '
                 [ .[]
-                  | select(.baseRefName == "main")
-                  | select((.headRefName | startswith("wave-")) | not)
+                  | select(.baseRefName == $base)
+                  | select((.headRefName | startswith("mission/")) | not)
                   | select(any(.closingIssuesReferences[]?; .number == $issue))
                 ]
                 | sort_by(.number)
@@ -155,7 +173,7 @@ jobs:
               git fetch origin "$CONSOLIDATED_BRANCH"
             fi
 
-            git checkout -B "$CONSOLIDATED_BRANCH" origin/main
+            git checkout -B "$CONSOLIDATED_BRANCH" "origin/$MISSION_BRANCH"
 
             for index in "${!CHILD_REFS[@]}"; do
               REF_NAME="${CHILD_REFS[$index]}"
@@ -207,7 +225,7 @@ jobs:
               fi
             } > "$BODY_FILE"
 
-            OPEN_WAVE_PR_NUMBER=$(gh_auth pr list --head "$CONSOLIDATED_BRANCH" --base main --state open --json number --jq '.[0].number // empty')
+            OPEN_WAVE_PR_NUMBER=$(gh_auth pr list --head "$CONSOLIDATED_BRANCH" --base "$MISSION_BRANCH" --state open --json number --jq '.[0].number // empty')
             PR_CREATED=false
 
             if [ "$REMOTE_BRANCH_EXISTS" = true ] && git diff --quiet "origin/$CONSOLIDATED_BRANCH...HEAD"; then
@@ -216,17 +234,17 @@ jobs:
               git push origin "$CONSOLIDATED_BRANCH" --force-with-lease
             fi
 
-            TITLE="feat(wave-$WAVE): consolidate ${#CHILD_REFS[@]} completed tasks"
+            TITLE="feat(${MISSION_ID}/wave-$WAVE): consolidate ${#CHILD_REFS[@]} completed tasks"
 
             if [ -n "$OPEN_WAVE_PR_NUMBER" ]; then
               gh_auth pr edit "$OPEN_WAVE_PR_NUMBER" --title "$TITLE" --body-file "$BODY_FILE"
             else
-              gh_auth pr create --base main --head "$CONSOLIDATED_BRANCH" --title "$TITLE" --body-file "$BODY_FILE"
+              gh_auth pr create --base "$MISSION_BRANCH" --head "$CONSOLIDATED_BRANCH" --title "$TITLE" --body-file "$BODY_FILE"
               PR_CREATED=true
             fi
 
-            WAVE_PR_NUMBER=$(gh_auth pr list --head "$CONSOLIDATED_BRANCH" --base main --state open --json number,url --jq '.[0].number // empty')
-            WAVE_PR_URL=$(gh_auth pr list --head "$CONSOLIDATED_BRANCH" --base main --state open --json number,url --jq '.[0].url // empty')
+            WAVE_PR_NUMBER=$(gh_auth pr list --head "$CONSOLIDATED_BRANCH" --base "$MISSION_BRANCH" --state open --json number,url --jq '.[0].number // empty')
+            WAVE_PR_URL=$(gh_auth pr list --head "$CONSOLIDATED_BRANCH" --base "$MISSION_BRANCH" --state open --json number,url --jq '.[0].url // empty')
 
             if [ "$PR_CREATED" = true ]; then
               if [ -n "$GATE_ISSUE" ] && [ "$GATE_ISSUE" != "null" ]; then
@@ -302,3 +320,4 @@ jobs:
             fi
 
           done
+          done  # end mission loop
