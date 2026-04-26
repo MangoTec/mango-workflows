@@ -81,10 +81,21 @@ En `.github/pipeline-config.json`:
 
 ```jsonc
 {
-  "version": "3.0.0",
+  "version": "4.0.0",
+
+  // ─── Mission (v4) ───
+  // Unit of work. One mission = one automated task launched with mango-workflows.
+  // Optional — omit for v3 backward compatibility.
+  "mission": {
+    "id": "portal-mvp",                           // Unique slug
+    "name": "Portal MVP — Estado de Cuenta",       // Human-readable
+    "specSource": "mango-engineering/specs/mango-portal/001-portal-mvp"  // Where the spec lives
+  },
+
+  // ─── Agent config (unchanged from v3) ───
   "agent": {
-    "primary": "copilot",        // Proveedor inicial
-    "fallback": "codex",         // Alternativa en retry
+    "primary": "copilot",
+    "fallback": "codex",
     "maxRetries": 2,
     "providers": {
       "copilot": {
@@ -98,34 +109,97 @@ En `.github/pipeline-config.json`:
       }
     }
   },
+
+  // ─── Spec linter (v4: enhanced) ───
   "specLinter": {
     "minBodyLength": 200,
-    "requiredSections": ["Requirements", "Acceptance Criteria"]
+    "requiredSections": ["Requirements", "Acceptance Criteria"],
+    // v4: validate that referenced files exist in the repo
+    "validateFileRefs": true,
+    // v4: require spec to reference the mission source-of-truth
+    "requireSpecSource": true
   },
+
+  // ─── Autonomy (v4: per-wave gates replace global boolean) ───
   "autonomy": {
-    "level": "human-gate-pr",    // human revisa PRs
+    "level": "human-gate-pr",
     "autoAssignAgent": true,
-    "autoMerge": false,
-    "waveGateRequired": true
+    "autoMerge": false
+    // NOTE: "waveGateRequired" is still supported for v3 compat.
+    // If "waves" uses object format (v4), per-wave gate config takes precedence.
   },
+
+  // ─── Waves (v4: object format with per-wave config) ───
+  // Each wave is an object with issues, gate type, and optional verify hooks.
+  // Gate types: "auto" | "human" | "verify-then-auto"
+  //   - auto: next wave unlocks immediately when all issues close
+  //   - human: gate issue gets notified, needs gate:approved label
+  //   - verify-then-auto: runs verify hooks first; if pass → auto-unlock; if fail → re-open issues with error context
   "waves": {
-    "0": [1],                    // Wave 0: issue #1
-    "1": [2, 3, 4]              // Wave 1: issues #2, #3, #4 (dependen de wave 0)
+    "0": {
+      "issues": [23],
+      "gate": "human"                              // Foundation wave — always review
+    },
+    "1": {
+      "issues": [6, 7, 18, 14, 15, 16, 20],
+      "gate": "verify-then-auto",                  // Trust CI + verify scripts
+      "verify": ["build", "test"]                  // References to verification.hooks keys
+    },
+    "2": {
+      "issues": [1, 2, 3, 12, 13, 8, 9],
+      "gate": "auto"                               // Low-risk, auto-unlock
+    },
+    "3": {
+      "issues": [4, 5, 10, 11, 21],
+      "gate": "human"                              // Final review before last wave
+    },
+    "4": {
+      "issues": [17, 19],
+      "gate": "auto"
+    }
   },
+
+  // ─── Verification hooks (v4: new) ───
+  // Named hooks that waves can reference in their "verify" array.
+  // Each hook is a shell command that runs in the repo root.
+  // Exit 0 = pass, non-zero = fail (error output injected into issue comment).
+  "verification": {
+    "hooks": {
+      "build": "npm run build",
+      "test": "npm run test",
+      "typecheck": "npx tsc --noEmit",
+      "custom": "./scripts/verify-mission.sh"
+    }
+  },
+
+  // ─── Cleanup policy (v4: new) ───
+  "cleanup": {
+    "deleteMergedTaskBranches": true,              // Delete task branches after consolidated PR merges
+    "closeResolvedGateIssues": true,               // Close gate issues when their wave is done
+    "deleteConsolidatedBranch": false,              // Keep wave-N/consolidate branches (history)
+    "removeLabelsOnComplete": true                  // Strip pipeline labels from completed issues
+  },
+
+  // ─── Dependencies (unchanged) ───
   "dependencies": {
-    "1": [],
-    "2": [1],
-    "3": [1],
-    "4": [1]
+    "23": [],
+    "6":  [23],
+    "7":  [23]
   },
+
+  // ─── Wave gates (v3 compat — optional in v4 if using object waves) ───
   "waveGates": {
-    "0": 10,                     // Issue #10 es el gate de wave 0
-    "1": 11
+    "0": 24,
+    "1": 25
   }
 }
 ```
 
-> **Backward compatibility**: v3 es compatible con v2 (`agent.primary` fallback a `agent.provider`, `agent.providers.copilot.username` fallback a `agent.copilot.username`).
+> **Backward compatibility**: v4 is fully backward-compatible with v3.
+> - If `waves` values are arrays (v3 format), `autonomy.waveGateRequired` controls gate behavior globally.
+> - If `waves` values are objects (v4 format), per-wave `gate` config takes precedence.
+> - `mission`, `verification`, and `cleanup` blocks are optional — workflows use sensible defaults when absent.
+> - v3→v2 compat is preserved (`agent.primary` fallback to `agent.provider`, etc.).
 
 ### 2. Agregar thin callers
 

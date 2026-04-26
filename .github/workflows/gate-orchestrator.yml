@@ -76,7 +76,13 @@ jobs:
               exit 0
             fi
 
-            NEXT_ISSUES=$(jq -r ".waves[\"$NEXT_WAVE\"][]" "$CONFIG")
+            # v4: waves can be objects with .issues array, or v3 plain arrays
+            NEXT_IS_OBJECT=$(jq -r ".waves[\"$NEXT_WAVE\"] | type" "$CONFIG")
+            if [ "$NEXT_IS_OBJECT" = "object" ]; then
+              NEXT_ISSUES=$(jq -r ".waves[\"$NEXT_WAVE\"].issues[]" "$CONFIG")
+            else
+              NEXT_ISSUES=$(jq -r ".waves[\"$NEXT_WAVE\"][]" "$CONFIG")
+            fi
             UNLOCKED=""
 
             for issue_num in $NEXT_ISSUES; do
@@ -88,7 +94,17 @@ jobs:
 
             if [ -n "${SLACK_WEBHOOK_URL:-}" ]; then
               ISSUE_COUNT=$(echo $UNLOCKED | wc -w | tr -d ' ')
-              MSG="🚀 *Wave $NEXT_WAVE desbloqueada* — $ISSUE_COUNT issues listos para agentes en \`$REPO_NAME\`"
+              GATE_URL="https://github.com/${{ github.repository }}/issues/${GATE_ISSUE}"
+              RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+              MSG=$(cat <<EOF
+🚀 *Wave ${NEXT_WAVE} desbloqueada*
+• Repo: \`${REPO_NAME}\`
+• Gate: <${GATE_URL}|#${GATE_ISSUE}> (aprobada)
+• Issues listas: ${ISSUE_COUNT}
+• Estado aplicado: \`status:ready\`
+• Run: <${RUN_URL}|ver ejecución>
+EOF
+)
               curl -sf -X POST "$SLACK_WEBHOOK_URL" \
                 -H "Content-Type: application/json" \
                 -d "{\"text\": $(echo "$MSG" | jq -Rs .)}" || true
@@ -101,11 +117,18 @@ jobs:
 
           if [ "$MODE" = "issue-closed" ]; then
             CLOSED_ISSUE="$ISSUE_NUMBER"
-            WAVE_GATE_REQUIRED=$(jq -r '.autonomy.waveGateRequired' "$CONFIG")
 
+            # Determine wave for closed issue
             CLOSED_WAVE=""
             for wave in $(jq -r '.waves | keys[]' "$CONFIG"); do
-              if jq -e ".waves[\"$wave\"] | index($CLOSED_ISSUE)" "$CONFIG" > /dev/null 2>&1; then
+              # v4: waves can be objects with .issues array, or v3 plain arrays
+              IS_OBJECT=$(jq -r ".waves[\"$wave\"] | type" "$CONFIG")
+              if [ "$IS_OBJECT" = "object" ]; then
+                MATCH=$(jq -e ".waves[\"$wave\"].issues | index($CLOSED_ISSUE)" "$CONFIG" 2>/dev/null && echo "yes" || echo "no")
+              else
+                MATCH=$(jq -e ".waves[\"$wave\"] | index($CLOSED_ISSUE)" "$CONFIG" 2>/dev/null && echo "yes" || echo "no")
+              fi
+              if [ "$MATCH" = "yes" ]; then
                 CLOSED_WAVE="$wave"
                 break
               fi
@@ -116,9 +139,15 @@ jobs:
               exit 0
             fi
 
-            WAVE_ISSUES=$(jq -r ".waves[\"$CLOSED_WAVE\"][]" "$CONFIG")
-            ALL_CLOSED=true
+            # Get issues for this wave (v4 object or v3 array)
+            IS_OBJECT=$(jq -r ".waves[\"$CLOSED_WAVE\"] | type" "$CONFIG")
+            if [ "$IS_OBJECT" = "object" ]; then
+              WAVE_ISSUES=$(jq -r ".waves[\"$CLOSED_WAVE\"].issues[]" "$CONFIG")
+            else
+              WAVE_ISSUES=$(jq -r ".waves[\"$CLOSED_WAVE\"][]" "$CONFIG")
+            fi
 
+            ALL_CLOSED=true
             for issue_num in $WAVE_ISSUES; do
               STATE=$(gh issue view "$issue_num" --json state --jq '.state')
               if [ "$STATE" != "CLOSED" ]; then
@@ -135,9 +164,34 @@ jobs:
               exit 0
             fi
 
-            NEXT_ISSUES=$(jq -r ".waves[\"$NEXT_WAVE\"][]" "$CONFIG")
+            # Get next wave issues (v4 or v3)
+            NEXT_IS_OBJECT=$(jq -r ".waves[\"$NEXT_WAVE\"] | type" "$CONFIG")
+            if [ "$NEXT_IS_OBJECT" = "object" ]; then
+              NEXT_ISSUES=$(jq -r ".waves[\"$NEXT_WAVE\"].issues[]" "$CONFIG")
+            else
+              NEXT_ISSUES=$(jq -r ".waves[\"$NEXT_WAVE\"][]" "$CONFIG")
+            fi
 
-            if [ "$WAVE_GATE_REQUIRED" = "true" ]; then
+            # Determine gate type for closed wave
+            # v4: per-wave gate config; v3 fallback: autonomy.waveGateRequired
+            GATE_TYPE=""
+            if [ "$IS_OBJECT" = "object" ]; then
+              GATE_TYPE=$(jq -r ".waves[\"$CLOSED_WAVE\"].gate // empty" "$CONFIG")
+            fi
+            if [ -z "$GATE_TYPE" ]; then
+              # v3 fallback
+              WAVE_GATE_REQUIRED=$(jq -r '.autonomy.waveGateRequired // true' "$CONFIG")
+              if [ "$WAVE_GATE_REQUIRED" = "true" ]; then
+                GATE_TYPE="human"
+              else
+                GATE_TYPE="auto"
+              fi
+            fi
+
+            echo "Wave $CLOSED_WAVE complete. Gate type: $GATE_TYPE"
+
+            if [ "$GATE_TYPE" = "human" ]; then
+              # Human gate: notify gate issue, wait for gate:approved
               GATE_ISSUE=$(jq -r ".waveGates[\"$CLOSED_WAVE\"] // empty" "$CONFIG")
               if [ -n "$GATE_ISSUE" ] && [ "$GATE_ISSUE" != "null" ]; then
                 NEXT_LIST=$(echo $NEXT_ISSUES | tr ' ' ', ' | sed 's/,/, #/g; s/^/#/')
@@ -148,13 +202,123 @@ jobs:
 
                 if [ -n "${SLACK_WEBHOOK_URL:-}" ]; then
                   GATE_URL="https://github.com/${{ github.repository }}/issues/${GATE_ISSUE}"
-                  MSG="🟡 *Action required*: Wave $CLOSED_WAVE is complete in \`$REPO_NAME\`. Approve gate <${GATE_URL}|#${GATE_ISSUE}> with label \`gate:approved\` to unlock Wave $NEXT_WAVE."
+                  RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+                  NEXT_COUNT=$(echo $NEXT_ISSUES | wc -w | tr -d ' ')
+                  MSG=$(cat <<EOF
+🟡 *Acción requerida — gate pendiente*
+• Repo: \`${REPO_NAME}\`
+• Wave completada: ${CLOSED_WAVE}
+• Próxima wave: ${NEXT_WAVE} (${NEXT_COUNT} issues)
+• Gate: <${GATE_URL}|#${GATE_ISSUE}>
+• Acción: agregar label \`gate:approved\`
+• Run: <${RUN_URL}|ver ejecución>
+EOF
+)
                   curl -sf -X POST "$SLACK_WEBHOOK_URL" \
                     -H "Content-Type: application/json" \
                     -d "{\"text\": $(echo "$MSG" | jq -Rs .)}" || true
                 fi
               fi
+
+            elif [ "$GATE_TYPE" = "verify-then-auto" ]; then
+              # Run verification hooks, then auto-unlock if pass
+              VERIFY_HOOKS=""
+              if [ "$IS_OBJECT" = "object" ]; then
+                VERIFY_HOOKS=$(jq -r '(.waves["'"$CLOSED_WAVE"'"].verify // []) | .[]' "$CONFIG" 2>/dev/null || true)
+              fi
+
+              VERIFY_PASSED=true
+              VERIFY_ERRORS=""
+
+              if [ -n "$VERIFY_HOOKS" ]; then
+                for hook_name in $VERIFY_HOOKS; do
+                  HOOK_CMD=$(jq -r ".verification.hooks[\"$hook_name\"] // empty" "$CONFIG")
+                  if [ -z "$HOOK_CMD" ]; then
+                    echo "::warning::Verify hook '$hook_name' not found in verification.hooks"
+                    continue
+                  fi
+
+                  echo "Running verify hook: $hook_name → $HOOK_CMD"
+                  set +e
+                  HOOK_OUTPUT=$(eval "$HOOK_CMD" 2>&1)
+                  HOOK_EXIT=$?
+                  set -e
+
+                  if [ "$HOOK_EXIT" -ne 0 ]; then
+                    VERIFY_PASSED=false
+                    VERIFY_ERRORS="$VERIFY_ERRORS\n### ❌ \`$hook_name\` failed (exit $HOOK_EXIT)\n\`\`\`\n$(echo "$HOOK_OUTPUT" | tail -50)\n\`\`\`\n"
+                  else
+                    echo "✅ $hook_name passed"
+                  fi
+                done
+              fi
+
+              if [ "$VERIFY_PASSED" = "true" ]; then
+                # All hooks passed — auto-unlock next wave
+                for issue_num in $NEXT_ISSUES; do
+                  GH_TOKEN="$TOKEN" gh issue edit "$issue_num" \
+                    --remove-label "status:blocked" \
+                    --add-label "status:ready" 2>/dev/null || true
+                done
+
+                if [ -n "${SLACK_WEBHOOK_URL:-}" ]; then
+                  NEXT_COUNT=$(echo $NEXT_ISSUES | wc -w | tr -d ' ')
+                  RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+                  MSG=$(cat <<EOF
+🟢 *Wave ${NEXT_WAVE} auto-desbloqueada (verificación OK)*
+• Repo: \`${REPO_NAME}\`
+• Wave completada: ${CLOSED_WAVE}
+• Verificación: todas las hooks pasaron
+• Issues listas: ${NEXT_COUNT}
+• Run: <${RUN_URL}|ver ejecución>
+EOF
+)
+                  curl -sf -X POST "$SLACK_WEBHOOK_URL" \
+                    -H "Content-Type: application/json" \
+                    -d "{\"text\": $(echo "$MSG" | jq -Rs .)}" || true
+                fi
+
+                # Close gate issue if exists
+                GATE_ISSUE=$(jq -r ".waveGates[\"$CLOSED_WAVE\"] // empty" "$CONFIG")
+                if [ -n "$GATE_ISSUE" ] && [ "$GATE_ISSUE" != "null" ]; then
+                  GH_TOKEN="$TOKEN" gh issue comment "$GATE_ISSUE" --body "🟢 **Wave $CLOSED_WAVE verified and auto-approved.** Wave $NEXT_WAVE unlocked."
+                  GH_TOKEN="$TOKEN" gh issue close "$GATE_ISSUE" --reason completed 2>/dev/null || true
+                fi
+              else
+                # Verification failed — re-open wave issues with error context for agents to fix
+                printf "Verification failed for wave $CLOSED_WAVE. Errors:\n$VERIFY_ERRORS"
+
+                for issue_num in $WAVE_ISSUES; do
+                  STATE=$(gh issue view "$issue_num" --json state --jq '.state')
+                  if [ "$STATE" = "CLOSED" ]; then
+                    GH_TOKEN="$TOKEN" gh issue edit "$issue_num" --remove-label "status:in-progress" 2>/dev/null || true
+                    GH_TOKEN="$TOKEN" gh api "repos/${{ github.repository }}/issues/$issue_num" \
+                      -X PATCH -f state=open 2>/dev/null || true
+                    COMMENT=$(printf "🔴 **Verification failed for wave $CLOSED_WAVE.** Fix the errors and close the issue again.\n\n%b" "$VERIFY_ERRORS")
+                    GH_TOKEN="$TOKEN" gh issue comment "$issue_num" --body "$COMMENT"
+                    GH_TOKEN="$TOKEN" gh issue edit "$issue_num" --add-label "status:ready" 2>/dev/null || true
+                  fi
+                done
+
+                if [ -n "${SLACK_WEBHOOK_URL:-}" ]; then
+                  RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+                  MSG=$(cat <<EOF
+🔴 *Verificación falló en wave ${CLOSED_WAVE} — issues re-abiertos*
+• Repo: \`${REPO_NAME}\`
+• Wave: ${CLOSED_WAVE}
+• Issues re-abiertos con contexto de error
+• Los agentes re-intentarán con el error
+• Run: <${RUN_URL}|ver ejecución>
+EOF
+)
+                  curl -sf -X POST "$SLACK_WEBHOOK_URL" \
+                    -H "Content-Type: application/json" \
+                    -d "{\"text\": $(echo "$MSG" | jq -Rs .)}" || true
+                fi
+              fi
+
             else
+              # auto gate: unlock next wave immediately
               for issue_num in $NEXT_ISSUES; do
                 GH_TOKEN="$TOKEN" gh issue edit "$issue_num" \
                   --remove-label "status:blocked" \
