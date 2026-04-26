@@ -231,7 +231,8 @@ jobs:
 
           if [ "$PROVIDER" = "copilot" ]; then
             MISSION_BRANCH="${{ steps.config.outputs.mission_branch }}"
-            gh issue comment "$ISSUE_NUMBER" --body "🤖 **Pipeline**: Routing to Copilot (mission: \`${{ steps.config.outputs.mission_id }}\`).\n\n@copilot please implement this issue according to the specification in the issue body, create a branch, and open a PR to \`$MISSION_BRANCH\`. Important: include \`Closes #$ISSUE_NUMBER\` in the PR body so issue automation can continue the wave pipeline."
+            COPILOT_BODY="$(printf '🤖 **Pipeline**: Routing to Copilot (mission: `%s`).\n\n@copilot please implement this issue according to the specification in the issue body, create a branch, and open a PR to `%s`. Important: include `Closes #%s` in the PR body so issue automation can continue the wave pipeline.' "${{ steps.config.outputs.mission_id }}" "$MISSION_BRANCH" "$ISSUE_NUMBER")"
+            gh issue comment "$ISSUE_NUMBER" --body "$COPILOT_BODY"
             EMOJI="🤖"
             PROVIDER_LABEL="Copilot"
           elif [ "$PROVIDER" = "codex" ]; then
