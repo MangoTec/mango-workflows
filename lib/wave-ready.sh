@@ -38,7 +38,10 @@ wave_consolidated_branch() {
   if [ "$mission_id" = "default" ] && [ "$mission_branch" = "$base_branch" ]; then
     echo "wave-${wave}/consolidate"
   else
-    echo "mission/${mission_id}/wave-${wave}/consolidate"
+    # Use -- separator instead of / to avoid Git ref conflict when mission_branch
+    # exists as a ref (e.g. mission/estado-de-cuenta cannot coexist with
+    # mission/estado-de-cuenta/wave-1/consolidate).
+    echo "consolidate/${mission_id}--wave-${wave}"
   fi
 }
 
@@ -198,7 +201,7 @@ finalize_merged_wave_pr() {
     child_pr_numbers=$(jq -r --argjson issue "$issue_num" --arg event_head "$event_head" '
       [ .[]
         | select(.headRefName != $event_head)
-        | select((.headRefName | test("(^|/)wave-[0-9]+/consolidate$")) | not)
+        | select((.headRefName | test("(^|/)wave-[0-9]+/consolidate$|^consolidate/")) | not)
         | select(any(.closingIssuesReferences[]?; .number == $issue))
         | .number
       ] | .[]
@@ -232,7 +235,7 @@ finalize_merged_wave_pr() {
       ref_name=$(jq -r --argjson issue "$issue_num" --arg event_head "$event_head" '
         [ .[]
           | select(.headRefName != $event_head)
-          | select((.headRefName | test("(^|/)wave-[0-9]+/consolidate$")) | not)
+          | select((.headRefName | test("(^|/)wave-[0-9]+/consolidate$|^consolidate/")) | not)
           | select(any(.closingIssuesReferences[]?; .number == $issue))
         ]
         | sort_by(.number)
@@ -385,7 +388,7 @@ for CONFIG in $(mission_list_active_configs "$MISSIONS_DIR"); do
           [ .[]
             | select(.baseRefName == $base or .baseRefName == $default_base)
             | select(.headRefName != $consolidated)
-            | select((.headRefName | test("(^|/)wave-[0-9]+/consolidate$")) | not)
+            | select((.headRefName | test("(^|/)wave-[0-9]+/consolidate$|^consolidate/")) | not)
             | select(any(.closingIssuesReferences[]?; .number == $issue))
           ]
           | sort_by(.number)
