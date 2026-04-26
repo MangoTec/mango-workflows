@@ -1,0 +1,25 @@
+{
+  "agents": {
+    "primary": "copilot",
+    "fallbackProvider": "codex",
+    "model": "claude-sonnet-4"
+  },
+  "autonomy": {
+    "level": "human-gate-pr",
+    "maxRetries": 3,
+    "waveGateRequired": true
+  },
+  "specLinter": {
+    "minBodyLength": 200,
+    "requiredSections": ["Requirements", "Acceptance Criteria"]
+  },
+  "waves": {
+    "0": [20, 21],
+    "1": [22, 23, 24],
+    "2": [25]
+  },
+  "waveGates": {
+    "0": 30,
+    "1": 31
+  }
+}

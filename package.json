@@ -1,0 +1,12 @@
+{
+  "name": "mango-workflows",
+  "version": "1.0.0",
+  "description": "Reusable GitHub Actions workflows and pipeline tooling for Mango",
+  "scripts": {
+    "test": "bats tests/*.bats",
+    "lint": "shellcheck lib/*.sh",
+    "status": "node scripts/serve-status.js MangoTec/mango-portal",
+    "status:portal": "node scripts/serve-status.js MangoTec/mango-portal"
+  },
+  "private": true
+}

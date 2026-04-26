@@ -1,0 +1,19 @@
+{
+  "agents": {
+    "primary": "copilot"
+  },
+  "autonomy": {
+    "maxRetries": 2,
+    "waveGateRequired": false
+  },
+  "waves": {
+    "0": {
+      "issues": [60, 61],
+      "gate": "auto"
+    },
+    "1": {
+      "issues": [62],
+      "gate": "auto"
+    }
+  }
+}

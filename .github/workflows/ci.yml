@@ -1,0 +1,37 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  actionlint:
+    name: Lint workflows
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: rhysd/actionlint@v1
+
+  shellcheck:
+    name: Shellcheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck lib/
+        run: shellcheck lib/*.sh
+
+  bats:
+    name: Shell unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install bats + helpers
+        run: |
+          git clone --depth 1 https://github.com/bats-core/bats-core.git /tmp/bats
+          sudo /tmp/bats/install.sh /usr/local
+          git clone --depth 1 https://github.com/bats-core/bats-support.git /tmp/bats-support
+          git clone --depth 1 https://github.com/bats-core/bats-assert.git /tmp/bats-assert
+      - name: Run tests
+        env:
+          BATS_LIB_PATH: /tmp
+        run: bats tests/*.bats
