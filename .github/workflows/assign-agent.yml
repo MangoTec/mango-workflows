@@ -183,14 +183,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           ISSUE_NUMBER: ${{ inputs.issue-number }}
           MISSION_BRANCH: ${{ steps.config.outputs.mission_branch }}
+          CONFIG_PATH: ${{ steps.config.outputs.config_path }}
         run: |
           # Copilot reads issue comments for context — this MUST come before assignment
-          COMMENT=$(cat <<'INSTRUCTIONS'
-          ⚠️ **IMPORTANT — Mandatory Instructions**
 
-          **Target Branch**: Your PR MUST target the branch `MISSION_BRANCH_PLACEHOLDER` (NOT `main`).
-          Include `Closes #ISSUE_PLACEHOLDER` in the PR body.
+          # 1. Resolve testing instructions from mission config or auto-detect
+          TESTING_INSTRUCTIONS=$(jq -r '.testing.instructions // empty' "$CONFIG_PATH" 2>/dev/null)
 
+          if [ -z "$TESTING_INSTRUCTIONS" ]; then
+            # Auto-detect test framework from repo files
+            if [ -f "vitest.config.ts" ] || [ -f "vitest.config.mts" ]; then
+              TESTING_INSTRUCTIONS=$(cat <<'VITEST_RULES'
           **Testing (TDD — mandatory)**:
           Every file you create or modify MUST have a corresponding test. Follow these rules:
           - New Zod schemas → Vitest unit test (validation happy + error paths)
@@ -199,14 +202,50 @@ jobs:
           - New server actions → Vitest unit test (success + error + validation failure)
           - New hooks → Vitest unit test (jsdom project, state transitions)
           - New components → Storybook story (default + variants + edge states)
-
           Place unit tests in `src/features/[feature]/__tests__/[module].test.ts`.
           Use descriptive test names: `it('should ...')`.
+          VITEST_RULES
+              )
+            elif [ -f "jest.config.js" ] || [ -f "jest.config.ts" ] || [ -f "jest.config.mjs" ]; then
+              TESTING_INSTRUCTIONS=$(cat <<'JEST_RULES'
+          **Testing (TDD — mandatory)**:
+          Every file you create or modify MUST have a corresponding test. Follow these rules:
+          - New services/lib → Jest unit test (happy + error paths)
+          - New controllers/routes → Jest integration test (request + response)
+          - New middleware → Jest unit test
+          - Mock external APIs with jest.mock() — never make real HTTP requests in tests.
+          Place tests next to source files as `[module].test.js` or in `__tests__/` directories.
+          Use descriptive test names: `it('should ...')`.
+          JEST_RULES
+              )
+            elif [ -f "phpunit.xml" ] || [ -f "phpunit.xml.dist" ]; then
+              TESTING_INSTRUCTIONS=$(cat <<'PHPUNIT_RULES'
+          **Testing (TDD — mandatory)**:
+          Every file you create or modify MUST have a corresponding test. Follow these rules:
+          - New service methods → PHPUnit unit test in tests/Unit/
+          - New API endpoints → PHPUnit feature test in tests/Feature/ (request + response assertion)
+          - New models/scopes → PHPUnit unit test for relationships and scopes
+          - Mock external APIs with Http::fake() — never make real HTTP requests in tests.
+          Use descriptive test names: `test_payment_creation_fails_when_credit_limit_exceeded`.
+          PHPUNIT_RULES
+              )
+            else
+              TESTING_INSTRUCTIONS="**Testing**: If this repo has tests, include tests for your changes."
+            fi
+          fi
+
+          # 2. Build the full comment
+          COMMENT=$(cat <<INSTRUCTIONS
+          ⚠️ **IMPORTANT — Mandatory Instructions**
+
+          **Target Branch**: Your PR MUST target the branch \`$MISSION_BRANCH\` (NOT \`main\`).
+          Include \`Closes #$ISSUE_NUMBER\` in the PR body.
+
+          $TESTING_INSTRUCTIONS
+
           Do NOT skip tests. A PR without tests will be rejected.
           INSTRUCTIONS
           )
-          COMMENT="${COMMENT//MISSION_BRANCH_PLACEHOLDER/$MISSION_BRANCH}"
-          COMMENT="${COMMENT//ISSUE_PLACEHOLDER/$ISSUE_NUMBER}"
           gh issue comment "$ISSUE_NUMBER" --body "$COMMENT"
 
       - name: Assign Copilot
