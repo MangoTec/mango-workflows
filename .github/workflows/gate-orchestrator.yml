@@ -96,15 +96,13 @@ jobs:
               ISSUE_COUNT=$(echo $UNLOCKED | wc -w | tr -d ' ')
               GATE_URL="https://github.com/${{ github.repository }}/issues/${GATE_ISSUE}"
               RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-              MSG=$(cat <<EOF
-🚀 *Wave ${NEXT_WAVE} desbloqueada*
-• Repo: \`${REPO_NAME}\`
-• Gate: <${GATE_URL}|#${GATE_ISSUE}> (aprobada)
-• Issues listas: ${ISSUE_COUNT}
-• Estado aplicado: \`status:ready\`
-• Run: <${RUN_URL}|ver ejecución>
-EOF
-)
+              MSG=$(printf '%s\n' \
+                "🚀 *Wave ${NEXT_WAVE} desbloqueada*" \
+                "• Repo: \`${REPO_NAME}\`" \
+                "• Gate: <${GATE_URL}|#${GATE_ISSUE}> (aprobada)" \
+                "• Issues listas: ${ISSUE_COUNT}" \
+                "• Estado aplicado: \`status:ready\`" \
+                "• Run: <${RUN_URL}|ver ejecución>")
               curl -sf -X POST "$SLACK_WEBHOOK_URL" \
                 -H "Content-Type: application/json" \
                 -d "{\"text\": $(echo "$MSG" | jq -Rs .)}" || true
@@ -204,16 +202,14 @@ EOF
                   GATE_URL="https://github.com/${{ github.repository }}/issues/${GATE_ISSUE}"
                   RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
                   NEXT_COUNT=$(echo $NEXT_ISSUES | wc -w | tr -d ' ')
-                  MSG=$(cat <<EOF
-🟡 *Acción requerida — gate pendiente*
-• Repo: \`${REPO_NAME}\`
-• Wave completada: ${CLOSED_WAVE}
-• Próxima wave: ${NEXT_WAVE} (${NEXT_COUNT} issues)
-• Gate: <${GATE_URL}|#${GATE_ISSUE}>
-• Acción: agregar label \`gate:approved\`
-• Run: <${RUN_URL}|ver ejecución>
-EOF
-)
+                  MSG=$(printf '%s\n' \
+                    "🟡 *Acción requerida — gate pendiente*" \
+                    "• Repo: \`${REPO_NAME}\`" \
+                    "• Wave completada: ${CLOSED_WAVE}" \
+                    "• Próxima wave: ${NEXT_WAVE} (${NEXT_COUNT} issues)" \
+                    "• Gate: <${GATE_URL}|#${GATE_ISSUE}>" \
+                    "• Acción: agregar label \`gate:approved\`" \
+                    "• Run: <${RUN_URL}|ver ejecución>")
                   curl -sf -X POST "$SLACK_WEBHOOK_URL" \
                     -H "Content-Type: application/json" \
                     -d "{\"text\": $(echo "$MSG" | jq -Rs .)}" || true
@@ -264,15 +260,13 @@ EOF
                 if [ -n "${SLACK_WEBHOOK_URL:-}" ]; then
                   NEXT_COUNT=$(echo $NEXT_ISSUES | wc -w | tr -d ' ')
                   RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-                  MSG=$(cat <<EOF
-🟢 *Wave ${NEXT_WAVE} auto-desbloqueada (verificación OK)*
-• Repo: \`${REPO_NAME}\`
-• Wave completada: ${CLOSED_WAVE}
-• Verificación: todas las hooks pasaron
-• Issues listas: ${NEXT_COUNT}
-• Run: <${RUN_URL}|ver ejecución>
-EOF
-)
+                  MSG=$(printf '%s\n' \
+                    "🟢 *Wave ${NEXT_WAVE} auto-desbloqueada (verificación OK)*" \
+                    "• Repo: \`${REPO_NAME}\`" \
+                    "• Wave completada: ${CLOSED_WAVE}" \
+                    "• Verificación: todas las hooks pasaron" \
+                    "• Issues listas: ${NEXT_COUNT}" \
+                    "• Run: <${RUN_URL}|ver ejecución>")
                   curl -sf -X POST "$SLACK_WEBHOOK_URL" \
                     -H "Content-Type: application/json" \
                     -d "{\"text\": $(echo "$MSG" | jq -Rs .)}" || true
@@ -302,15 +296,13 @@ EOF
 
                 if [ -n "${SLACK_WEBHOOK_URL:-}" ]; then
                   RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-                  MSG=$(cat <<EOF
-🔴 *Verificación falló en wave ${CLOSED_WAVE} — issues re-abiertos*
-• Repo: \`${REPO_NAME}\`
-• Wave: ${CLOSED_WAVE}
-• Issues re-abiertos con contexto de error
-• Los agentes re-intentarán con el error
-• Run: <${RUN_URL}|ver ejecución>
-EOF
-)
+                  MSG=$(printf '%s\n' \
+                    "🔴 *Verificación falló en wave ${CLOSED_WAVE} — issues re-abiertos*" \
+                    "• Repo: \`${REPO_NAME}\`" \
+                    "• Wave: ${CLOSED_WAVE}" \
+                    "• Issues re-abiertos con contexto de error" \
+                    "• Los agentes re-intentarán con el error" \
+                    "• Run: <${RUN_URL}|ver ejecución>")
                   curl -sf -X POST "$SLACK_WEBHOOK_URL" \
                     -H "Content-Type: application/json" \
                     -d "{\"text\": $(echo "$MSG" | jq -Rs .)}" || true

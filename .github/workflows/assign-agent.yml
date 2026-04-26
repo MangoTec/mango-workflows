@@ -218,16 +218,14 @@ jobs:
           fi
 
           if [ -n "${SLACK_WEBHOOK_URL:-}" ]; then
-            SLACK_MSG=$(cat <<EOF
-${EMOJI} *Pipeline en progreso — agente asignado*
-• Repo: \`${REPO_NAME}\`
-• Issue: <${ISSUE_URL}|#${ISSUE_NUMBER}> — ${TITLE}
-• Provider: ${PROVIDER_LABEL}
-• Actor: @${{ github.actor }}
-• Run: <${RUN_URL}|ver ejecución>
-• Estado: \`status:in-progress\`
-EOF
-)
+            SLACK_MSG=$(printf '%s\n' \
+              "${EMOJI} *Pipeline en progreso — agente asignado*" \
+              "• Repo: \`${REPO_NAME}\`" \
+              "• Issue: <${ISSUE_URL}|#${ISSUE_NUMBER}> — ${TITLE}" \
+              "• Provider: ${PROVIDER_LABEL}" \
+              "• Actor: @${{ github.actor }}" \
+              "• Run: <${RUN_URL}|ver ejecución>" \
+              "• Estado: \`status:in-progress\`")
             curl -sf -X POST "$SLACK_WEBHOOK_URL" \
               -H "Content-Type: application/json" \
               -d "{\"text\": $(echo "$SLACK_MSG" | jq -Rs .)}" || true
