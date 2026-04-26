@@ -173,6 +173,20 @@ jobs:
           gh issue comment "$ISSUE_NUMBER" --body "🟢 **Pipeline**: Issue ready. Autonomy is \`manual-stages\` — assign agent manually."
 
       # ─── Provider: Copilot ───
+      - name: Instruct Copilot target branch
+        if: >
+          steps.spec.outputs.valid == 'true' &&
+          steps.config.outputs.auto_assign == 'true' &&
+          steps.config.outputs.autonomy != 'manual-stages' &&
+          steps.provider.outputs.provider == 'copilot'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ inputs.issue-number }}
+          MISSION_BRANCH: ${{ steps.config.outputs.mission_branch }}
+        run: |
+          # Copilot reads issue comments for context — this MUST come before assignment
+          gh issue comment "$ISSUE_NUMBER" --body "$(printf '⚠️ **IMPORTANT — Target Branch**\n\nYour PR MUST target the branch \`%s\` (NOT \`main\`).\nInclude \`Closes #%s\` in the PR body.' "$MISSION_BRANCH" "$ISSUE_NUMBER")"
+
       - name: Assign Copilot
         if: >
           steps.spec.outputs.valid == 'true' &&

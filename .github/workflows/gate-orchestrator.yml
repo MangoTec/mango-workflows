@@ -28,7 +28,8 @@ jobs:
       cancel-in-progress: false
     permissions:
       issues: write
-      contents: read
+      contents: write
+      pull-requests: write
 
     steps:
       - name: Checkout (caller's repo)
@@ -212,13 +213,36 @@ jobs:
             echo "Wave $CLOSED_WAVE complete. Gate type: $GATE_TYPE"
 
             if [ "$GATE_TYPE" = "human" ]; then
-              # Human gate: notify gate issue, wait for gate:approved
+              # Human gate: create unified wave PR and notify
               GATE_ISSUE=$(jq -r ".waveGates[\"$CLOSED_WAVE\"] // empty" "$CONFIG")
+              MISSION_BRANCH=$(jq -r '.mission.missionBranch' "$CONFIG")
+              BASE_BRANCH=$(jq -r '.mission.baseBranch // "main"' "$CONFIG")
+              MISSION_ID=$(jq -r '.mission.id' "$CONFIG")
+
+              # Create unified PR: mission branch → base branch
+              WAVE_ISSUE_LIST=""
+              for issue_num in $WAVE_ISSUES; do
+                WAVE_ISSUE_LIST="${WAVE_ISSUE_LIST}- Closes #${issue_num}"$'\n'
+              done
+
+              PR_TITLE="feat(${MISSION_ID}): wave ${CLOSED_WAVE} unified"
+              PR_BODY="$(printf '## Wave %s — Unified PR\n\nThis PR contains all work from Wave %s of mission `%s`.\n\n### Issues included\n%s\n### Review\nReview the combined changes, then approve and merge.\nAfter merge, add `gate:approved` label to [Gate #%s](https://github.com/%s/issues/%s) to unlock Wave %s.' "$CLOSED_WAVE" "$CLOSED_WAVE" "$MISSION_ID" "$WAVE_ISSUE_LIST" "$GATE_ISSUE" "${{ github.repository }}" "$GATE_ISSUE" "$NEXT_WAVE")"
+
+              UNIFIED_PR=$(GH_TOKEN="$TOKEN" gh pr create \
+                --base "$BASE_BRANCH" \
+                --head "$MISSION_BRANCH" \
+                --title "$PR_TITLE" \
+                --body "$PR_BODY" 2>&1) || {
+                echo "::warning::Could not create unified PR (may already exist): $UNIFIED_PR"
+                UNIFIED_PR=$(GH_TOKEN="$TOKEN" gh pr list --base "$BASE_BRANCH" --head "$MISSION_BRANCH" --json url --jq '.[0].url // empty')
+              }
+
               if [ -n "$GATE_ISSUE" ] && [ "$GATE_ISSUE" != "null" ]; then
                 NEXT_LIST=$(echo $NEXT_ISSUES | tr ' ' ', ' | sed 's/,/, #/g; s/^/#/')
                 BODY="✅ **Wave $CLOSED_WAVE complete!**"
+                BODY="$BODY"$'\n\n'"📦 **Unified PR**: $UNIFIED_PR"
                 BODY="$BODY"$'\n\n'"Next wave (Wave $NEXT_WAVE): $NEXT_LIST"
-                BODY="$BODY"$'\n\n'"Review, test, then add \`gate:approved\` label to unlock."
+                BODY="$BODY"$'\n\n'"Review the unified PR, merge, then add \`gate:approved\` label to unlock."
                 GH_TOKEN="$TOKEN" gh issue comment "$GATE_ISSUE" --body "$BODY"
 
                 if [ -n "${SLACK_WEBHOOK_URL:-}" ]; then
