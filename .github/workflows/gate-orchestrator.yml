@@ -34,6 +34,13 @@ jobs:
       - name: Checkout (caller's repo)
         uses: actions/checkout@v4
 
+      - name: Checkout workflow libs
+        uses: actions/checkout@v4
+        with:
+          repository: MangoTec/mango-workflows
+          path: .mango-workflows
+          sparse-checkout: lib
+
       - name: Execute mode
         env:
           GH_TOKEN: ${{ github.token }}
@@ -44,31 +51,42 @@ jobs:
         run: |
           set -euo pipefail
 
-          CONFIG=".github/pipeline-config.json"
+          source .mango-workflows/lib/mission.sh
+          source .mango-workflows/lib/config.sh
+          source .mango-workflows/lib/waves.sh
+
+          MISSIONS_DIR=".github/missions"
           TOKEN="${GH_PAT_PORTAL:-$GH_TOKEN}"
           REPO_NAME=$(basename "${{ github.repository }}")
 
           if [ "$MODE" = "gate-approved" ]; then
             GATE_ISSUE="$ISSUE_NUMBER"
 
+            # Find mission by scanning waveGates across all active missions
+            CONFIG=""
             GATE_WAVE=""
-            for wave in $(jq -r '.waveGates | keys[]' "$CONFIG"); do
-              GATE_NUM=$(jq -r ".waveGates[\"$wave\"] // empty" "$CONFIG")
-              if [ "$GATE_NUM" = "$GATE_ISSUE" ]; then
-                GATE_WAVE="$wave"
-                break
-              fi
+            for f in "$MISSIONS_DIR"/*.json; do
+              [ -f "$f" ] || continue
+              local_status=$(jq -r '.mission.status // "active"' "$f")
+              [ "$local_status" = "active" ] || continue
+              for wave in $(jq -r '.waveGates | keys[]' "$f" 2>/dev/null); do
+                GATE_NUM=$(jq -r ".waveGates[\"$wave\"] // empty" "$f")
+                if [ "$GATE_NUM" = "$GATE_ISSUE" ]; then
+                  GATE_WAVE="$wave"
+                  CONFIG="$f"
+                  break 2
+                fi
+              done
             done
 
-            if [ -z "$GATE_WAVE" ]; then
+            if [ -z "$CONFIG" ] || [ -z "$GATE_WAVE" ]; then
               TITLE=$(gh issue view "$GATE_ISSUE" --json title --jq '.title')
               GATE_WAVE=$(echo "$TITLE" | grep -oP 'Wave \K\d+' || true)
-            fi
-
-            if [ -z "$GATE_WAVE" ]; then
-              echo "::error::Cannot determine wave for gate issue #$GATE_ISSUE"
+              echo "::error::Cannot determine mission/wave for gate issue #$GATE_ISSUE"
               exit 1
             fi
+
+            MISSION_ID=$(jq -r '.mission.id' "$CONFIG")
 
             NEXT_WAVE=$((GATE_WAVE + 1))
             if ! jq -e ".waves[\"$NEXT_WAVE\"]" "$CONFIG" > /dev/null 2>&1; then
@@ -113,8 +131,13 @@ jobs:
             exit 0
           fi
 
-          if [ "$MODE" = "issue-closed" ]; then
-            CLOSED_ISSUE="$ISSUE_NUMBER"
+          if [ "$MODE" = "issue-closed" ]; then            # Resolve mission config for this issue
+            RESOLVED=$(cfg_resolve_for_issue "$MISSIONS_DIR" "$ISSUE_NUMBER" 2>/dev/null) || {
+              echo "Issue #$ISSUE_NUMBER not found in any active mission — skipping"
+              exit 0
+            }
+            CONFIG=$(echo "$RESOLVED" | head -1)
+            MISSION_ID=$(echo "$RESOLVED" | tail -1)            CLOSED_ISSUE="$ISSUE_NUMBER"
 
             # Determine wave for closed issue
             CLOSED_WAVE=""

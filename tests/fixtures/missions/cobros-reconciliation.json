@@ -1,0 +1,43 @@
+{
+  "version": "5.0.0",
+  "mission": {
+    "id": "cobros-reconciliation",
+    "name": "Cobros — Reconciliación automática",
+    "specSource": "mango-engineering/specs/mango-cobros/004-reconciliation",
+    "baseBranch": "main",
+    "missionBranch": "mission/cobros-reconciliation",
+    "status": "active"
+  },
+  "agent": {
+    "primary": "copilot",
+    "maxRetries": 3,
+    "providers": {
+      "copilot": { "username": "copilot-swe-agent" }
+    }
+  },
+  "specLinter": {
+    "minBodyLength": 150,
+    "requiredSections": ["Requirements"],
+    "validateFileRefs": false
+  },
+  "autonomy": {
+    "level": "human-gate-pr",
+    "autoAssignAgent": true
+  },
+  "waves": {
+    "0": {
+      "issues": [201, 202, 203],
+      "gate": "auto"
+    },
+    "1": {
+      "issues": [204, 205],
+      "gate": "human"
+    }
+  },
+  "waveGates": {
+    "0": 210
+  },
+  "cleanup": {
+    "deleteMergedTaskBranches": true
+  }
+}

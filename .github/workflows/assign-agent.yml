@@ -28,39 +28,64 @@ jobs:
       - name: Checkout (caller's repo)
         uses: actions/checkout@v4
 
-      - name: Read pipeline config
-        id: config
-        run: |
-          CONFIG=$(cat .github/pipeline-config.json)
+      - name: Checkout workflow libs
+        uses: actions/checkout@v4
+        with:
+          repository: MangoTec/mango-workflows
+          path: .mango-workflows
+          sparse-checkout: lib
 
-          # Agent config (v3 schema with v2 fallback)
-          echo "primary=$(echo "$CONFIG" | jq -r '.agent.primary // .agent.provider // "copilot"')" >> "$GITHUB_OUTPUT"
-          echo "fallback=$(echo "$CONFIG" | jq -r '.agent.fallback // empty')" >> "$GITHUB_OUTPUT"
-          echo "max_retries=$(echo "$CONFIG" | jq -r '.agent.maxRetries // 2')" >> "$GITHUB_OUTPUT"
+      - name: Resolve mission config
+        id: config
+        env:
+          ISSUE_NUMBER: ${{ inputs.issue-number }}
+        run: |
+          source .mango-workflows/lib/mission.sh
+          source .mango-workflows/lib/config.sh
+
+          MISSIONS_DIR=".github/missions"
+
+          RESOLVED=$(cfg_resolve_for_issue "$MISSIONS_DIR" "$ISSUE_NUMBER") || {
+            echo "::error::Issue #$ISSUE_NUMBER not found in any active mission under $MISSIONS_DIR"
+            exit 1
+          }
+          CONFIG_PATH=$(echo "$RESOLVED" | head -1)
+          MISSION_ID=$(echo "$RESOLVED" | tail -1)
+
+          echo "config_path=$CONFIG_PATH" >> "$GITHUB_OUTPUT"
+          echo "mission_id=$MISSION_ID" >> "$GITHUB_OUTPUT"
+
+          # Mission metadata
+          echo "mission_branch=$(mission_get_branch "$MISSIONS_DIR" "$MISSION_ID")" >> "$GITHUB_OUTPUT"
+          echo "base_branch=$(mission_get_base_branch "$MISSIONS_DIR" "$MISSION_ID")" >> "$GITHUB_OUTPUT"
+          echo "spec_source=$(mission_get_spec_source "$CONFIG_PATH")" >> "$GITHUB_OUTPUT"
+
+          # Agent config
+          echo "primary=$(cfg_primary_provider "$CONFIG_PATH")" >> "$GITHUB_OUTPUT"
+          echo "fallback=$(cfg_fallback_provider "$CONFIG_PATH")" >> "$GITHUB_OUTPUT"
+          echo "max_retries=$(cfg_max_retries "$CONFIG_PATH")" >> "$GITHUB_OUTPUT"
 
           # Copilot
-          echo "copilot_user=$(echo "$CONFIG" | jq -r '.agent.providers.copilot.username // .agent.copilot.username // "copilot-swe-agent"')" >> "$GITHUB_OUTPUT"
+          echo "copilot_user=$(jq -r '.agent.providers.copilot.username // "copilot-swe-agent"' "$CONFIG_PATH")" >> "$GITHUB_OUTPUT"
 
           # Codex
-          echo "codex_model=$(echo "$CONFIG" | jq -r '.agent.providers.codex.model // .agent.codex.model // "gpt-5.4"')" >> "$GITHUB_OUTPUT"
-          echo "codex_effort=$(echo "$CONFIG" | jq -r '.agent.providers.codex.effort // .agent.codex.effort // "medium"')" >> "$GITHUB_OUTPUT"
-          echo "codex_sandbox=$(echo "$CONFIG" | jq -r '.agent.providers.codex.sandbox // .agent.codex.sandbox // "workspace-write"')" >> "$GITHUB_OUTPUT"
-          echo "codex_prompt=$(echo "$CONFIG" | jq -r '.agent.providers.codex.promptTemplate // .agent.codex.promptTemplate // ".github/codex/prompts/implement.md"')" >> "$GITHUB_OUTPUT"
+          echo "codex_model=$(jq -r '.agent.providers.codex.model // "gpt-5.4"' "$CONFIG_PATH")" >> "$GITHUB_OUTPUT"
+          echo "codex_effort=$(jq -r '.agent.providers.codex.effort // "medium"' "$CONFIG_PATH")" >> "$GITHUB_OUTPUT"
+          echo "codex_sandbox=$(jq -r '.agent.providers.codex.sandbox // "workspace-write"' "$CONFIG_PATH")" >> "$GITHUB_OUTPUT"
+          echo "codex_prompt=$(jq -r '.agent.providers.codex.promptTemplate // ".github/codex/prompts/implement.md"' "$CONFIG_PATH")" >> "$GITHUB_OUTPUT"
 
           # Spec linter
-          echo "min_body=$(echo "$CONFIG" | jq -r '.specLinter.minBodyLength // 200')" >> "$GITHUB_OUTPUT"
-          SECTIONS=$(echo "$CONFIG" | jq -r '(.specLinter.requiredSections // ["Requirements","Acceptance Criteria"]) | join("|")')
+          echo "min_body=$(jq -r '.specLinter.minBodyLength // 200' "$CONFIG_PATH")" >> "$GITHUB_OUTPUT"
+          SECTIONS=$(jq -r '(.specLinter.requiredSections // ["Requirements","Acceptance Criteria"]) | join("|")' "$CONFIG_PATH")
           echo "required_sections=$SECTIONS" >> "$GITHUB_OUTPUT"
-          echo "validate_file_refs=$(echo "$CONFIG" | jq -r '.specLinter.validateFileRefs // false')" >> "$GITHUB_OUTPUT"
-          echo "require_spec_source=$(echo "$CONFIG" | jq -r '.specLinter.requireSpecSource // false')" >> "$GITHUB_OUTPUT"
-
-          # Mission (v4)
-          echo "mission_id=$(echo "$CONFIG" | jq -r '.mission.id // empty')" >> "$GITHUB_OUTPUT"
-          echo "spec_source=$(echo "$CONFIG" | jq -r '.mission.specSource // empty')" >> "$GITHUB_OUTPUT"
+          echo "validate_file_refs=$(jq -r '.specLinter.validateFileRefs // false' "$CONFIG_PATH")" >> "$GITHUB_OUTPUT"
+          echo "require_spec_source=$(jq -r '.specLinter.requireSpecSource // false' "$CONFIG_PATH")" >> "$GITHUB_OUTPUT"
 
           # Autonomy
-          echo "auto_assign=$(echo "$CONFIG" | jq -r '.autonomy.autoAssignAgent // true')" >> "$GITHUB_OUTPUT"
-          echo "autonomy=$(echo "$CONFIG" | jq -r '.autonomy.level // "human-gate-pr"')" >> "$GITHUB_OUTPUT"
+          echo "auto_assign=$(jq -r '.autonomy.autoAssignAgent // true' "$CONFIG_PATH")" >> "$GITHUB_OUTPUT"
+          echo "autonomy=$(jq -r '.autonomy.level // "human-gate-pr"' "$CONFIG_PATH")" >> "$GITHUB_OUTPUT"
+
+          echo "Resolved: mission=$MISSION_ID, config=$CONFIG_PATH, branch=$(mission_get_branch "$MISSIONS_DIR" "$MISSION_ID")"
 
       - name: Determine provider
         id: provider
@@ -92,6 +117,7 @@ jobs:
           REQUIRE_SPEC_SOURCE: ${{ steps.config.outputs.require_spec_source }}
           MISSION_ID: ${{ steps.config.outputs.mission_id }}
           SPEC_SOURCE: ${{ steps.config.outputs.spec_source }}
+          MISSION_BRANCH: ${{ steps.config.outputs.mission_branch }}
         run: |
           BODY=$(gh issue view "$ISSUE_NUMBER" --json body --jq '.body')
           BODY_LENGTH=${#BODY}
@@ -204,7 +230,8 @@ jobs:
           RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
           if [ "$PROVIDER" = "copilot" ]; then
-            gh issue comment "$ISSUE_NUMBER" --body "🤖 **Pipeline**: Routing to Copilot.\n\n@copilot please implement this issue according to the specification in the issue body, create a branch, and open a PR to main. Important: include \`Closes #$ISSUE_NUMBER\` in the PR body so issue automation can continue the wave pipeline."
+            MISSION_BRANCH="${{ steps.config.outputs.mission_branch }}"
+            gh issue comment "$ISSUE_NUMBER" --body "🤖 **Pipeline**: Routing to Copilot (mission: \`${{ steps.config.outputs.mission_id }}\`).\n\n@copilot please implement this issue according to the specification in the issue body, create a branch, and open a PR to \`$MISSION_BRANCH\`. Important: include \`Closes #$ISSUE_NUMBER\` in the PR body so issue automation can continue the wave pipeline."
             EMOJI="🤖"
             PROVIDER_LABEL="Copilot"
           elif [ "$PROVIDER" = "codex" ]; then
@@ -218,9 +245,11 @@ jobs:
           fi
 
           if [ -n "${SLACK_WEBHOOK_URL:-}" ]; then
+            MISSION_ID="${{ steps.config.outputs.mission_id }}"
             SLACK_MSG=$(printf '%s\n' \
               "${EMOJI} *Pipeline en progreso — agente asignado*" \
               "• Repo: \`${REPO_NAME}\`" \
+              "• Misión: \`${MISSION_ID}\`" \
               "• Issue: <${ISSUE_URL}|#${ISSUE_NUMBER}> — ${TITLE}" \
               "• Provider: ${PROVIDER_LABEL}" \
               "• Actor: @${{ github.actor }}" \

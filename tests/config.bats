@@ -6,6 +6,7 @@ load "${BATS_LIB_PATH:-/opt/homebrew/lib}/bats-assert/load"
 setup() {
   source "$BATS_TEST_DIRNAME/../lib/config.sh"
   FIXTURES="$BATS_TEST_DIRNAME/fixtures"
+  MISSIONS_DIR="$FIXTURES/missions"
 }
 
 # ─── cfg_primary_provider ───
@@ -98,4 +99,50 @@ setup() {
   run cfg_mission_id "$FIXTURES/config-v3.json"
   assert_success
   assert_output ""
+}
+
+# ─── cfg_resolve_for_issue (multi-mission) ───
+
+@test "cfg_resolve_for_issue returns config path and mission id for known issue" {
+  run cfg_resolve_for_issue "$MISSIONS_DIR" 103
+  assert_success
+  assert_line --index 0 "$MISSIONS_DIR/cobros-export.json"
+  assert_line --index 1 "cobros-export"
+}
+
+@test "cfg_resolve_for_issue returns config for issue in second mission" {
+  run cfg_resolve_for_issue "$MISSIONS_DIR" 204
+  assert_success
+  assert_line --index 0 "$MISSIONS_DIR/cobros-reconciliation.json"
+  assert_line --index 1 "cobros-reconciliation"
+}
+
+@test "cfg_resolve_for_issue fails for unknown issue" {
+  run cfg_resolve_for_issue "$MISSIONS_DIR" 999
+  assert_failure
+}
+
+@test "cfg_resolve_for_issue skips paused missions" {
+  run cfg_resolve_for_issue "$MISSIONS_DIR" 301
+  assert_failure
+}
+
+# ─── v5 config readers (agent block) ───
+
+@test "cfg_primary_provider reads v5 agent.primary" {
+  run cfg_primary_provider "$MISSIONS_DIR/cobros-export.json"
+  assert_success
+  assert_output "copilot"
+}
+
+@test "cfg_fallback_provider reads v5 agent.fallback" {
+  run cfg_fallback_provider "$MISSIONS_DIR/cobros-export.json"
+  assert_success
+  assert_output "codex"
+}
+
+@test "cfg_max_retries reads v5 agent.maxRetries" {
+  run cfg_max_retries "$MISSIONS_DIR/cobros-export.json"
+  assert_success
+  assert_output "2"
 }

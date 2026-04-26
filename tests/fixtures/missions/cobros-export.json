@@ -1,0 +1,70 @@
+{
+  "version": "5.0.0",
+  "mission": {
+    "id": "cobros-export",
+    "name": "Cobros — Exportación de PDFs",
+    "specSource": "mango-engineering/specs/mango-cobros/003-export",
+    "baseBranch": "main",
+    "missionBranch": "mission/cobros-export",
+    "status": "active"
+  },
+  "agent": {
+    "primary": "copilot",
+    "fallback": "codex",
+    "maxRetries": 2,
+    "providers": {
+      "copilot": { "username": "copilot-swe-agent" },
+      "codex": {
+        "model": "gpt-5.4",
+        "effort": "medium",
+        "sandbox": "workspace-write",
+        "promptTemplate": ".github/codex/prompts/implement.md"
+      }
+    }
+  },
+  "specLinter": {
+    "minBodyLength": 200,
+    "requiredSections": ["Requirements", "Acceptance Criteria"],
+    "validateFileRefs": true,
+    "requireSpecSource": true
+  },
+  "autonomy": {
+    "level": "human-gate-pr",
+    "autoAssignAgent": true,
+    "autoMerge": false
+  },
+  "waves": {
+    "0": {
+      "issues": [101, 102],
+      "gate": "human"
+    },
+    "1": {
+      "issues": [103, 104, 105],
+      "gate": "verify-then-auto",
+      "verify": ["build", "test"]
+    },
+    "2": {
+      "issues": [106, 107],
+      "gate": "auto"
+    }
+  },
+  "waveGates": {
+    "0": 110,
+    "1": 111
+  },
+  "verification": {
+    "hooks": {
+      "build": "npm run build 2>&1 | tail -20",
+      "test": "npm run test 2>&1 | tail -20"
+    }
+  },
+  "cleanup": {
+    "deleteMergedTaskBranches": true,
+    "closeResolvedGateIssues": true,
+    "removeLabelsOnComplete": true
+  },
+  "dependencies": {
+    "103": [101],
+    "104": [102]
+  }
+}

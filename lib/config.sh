@@ -1,30 +1,50 @@
 #!/usr/bin/env bash
-# Shell library for reading pipeline-config.json (v2/v3/v4 compatible)
+# Shell library for reading pipeline config (v5 multi-mission + legacy v2/v3/v4)
 # Source this file: source lib/config.sh
 
 set -euo pipefail
 
-# Primary AI provider (v4: agents.primary → v3: agents.primary → v2: agent.provider → default)
+# Resolve config file + mission id for an issue number
+# Scans missions directory for the issue
+# Usage: cfg_resolve_for_issue MISSIONS_DIR ISSUE_NUM
+# Output (two lines): config_path, mission_id
+# Exit: 0 if found, 1 if not
+cfg_resolve_for_issue() {
+  local dir="$1" issue="$2"
+  # Source mission.sh relative to this lib
+  local lib_dir
+  lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  source "$lib_dir/mission.sh" 2>/dev/null || true
+
+  local mid
+  mid=$(mission_find_for_issue "$dir" "$issue")
+  if [ -z "$mid" ]; then
+    return 1
+  fi
+  echo "$dir/$mid.json"
+  echo "$mid"
+  return 0
+}
+
+# Primary AI provider (v5: agent.primary → v4/v3: agents.primary → v2: agent.provider)
 # Usage: cfg_primary_provider CONFIG_FILE
 cfg_primary_provider() {
   local config="$1"
-  local val
-  val=$(jq -r '.agents.primary // .agent.primary // .agent.provider // "copilot"' "$config")
-  echo "$val"
+  jq -r '.agent.primary // .agents.primary // .agent.provider // "copilot"' "$config"
 }
 
 # Fallback AI provider
 # Usage: cfg_fallback_provider CONFIG_FILE
 cfg_fallback_provider() {
   local config="$1"
-  jq -r '.agents.fallbackProvider // .agent.fallbackProvider // empty' "$config"
+  jq -r '.agent.fallback // .agents.fallbackProvider // .agent.fallbackProvider // empty' "$config"
 }
 
 # Max retries
 # Usage: cfg_max_retries CONFIG_FILE
 cfg_max_retries() {
   local config="$1"
-  jq -r '.autonomy.maxRetries // 2' "$config"
+  jq -r '.agent.maxRetries // .autonomy.maxRetries // 2' "$config"
 }
 
 # Copilot username

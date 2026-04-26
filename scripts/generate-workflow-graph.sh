@@ -17,10 +17,29 @@ mkdir -p "$(dirname "$OUTPUT_BASE")"
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
 
-config_b64="$(gh api "repos/${REPO}/contents/.github/pipeline-config.json" --jq '.content' | tr -d '\n')"
-printf '%s' "$config_b64" | base64 --decode > "$tmp_dir/pipeline-config.json"
+config_b64="$(gh api "repos/${REPO}/contents/.github/missions" --jq '.[].name' 2>/dev/null || echo "")"
 
-all_issue_ids="$((jq -r '.waves | keys[] as $k | .[$k][]' "$tmp_dir/pipeline-config.json"; jq -r '.waveGates | keys[] as $k | .[$k] // empty' "$tmp_dir/pipeline-config.json") | awk 'NF' | sort -n | uniq)"
+if [ -z "$config_b64" ]; then
+  # Fallback: try legacy single config
+  config_b64="$(gh api "repos/${REPO}/contents/.github/pipeline-config.json" --jq '.content' | tr -d '\n')"
+  printf '%s' "$config_b64" | base64 --decode > "$tmp_dir/pipeline-config.json"
+  mission_configs=("$tmp_dir/pipeline-config.json")
+else
+  mkdir -p "$tmp_dir/missions"
+  mission_configs=()
+  for fname in $config_b64; do
+    file_b64="$(gh api "repos/${REPO}/contents/.github/missions/${fname}" --jq '.content' | tr -d '\n')"
+    printf '%s' "$file_b64" | base64 --decode > "$tmp_dir/missions/${fname}"
+    mission_configs+=("$tmp_dir/missions/${fname}")
+  done
+fi
+
+all_issue_ids=""
+for mcfg in "${mission_configs[@]}"; do
+  mcfg_issues="$((jq -r '.waves | to_entries[] | .value | if type == "object" then .issues[] else .[] end' "$mcfg" 2>/dev/null; jq -r '.waveGates | values[] // empty' "$mcfg" 2>/dev/null) | awk 'NF')"
+  all_issue_ids="$(printf '%s\n%s' "$all_issue_ids" "$mcfg_issues")"
+done
+all_issue_ids="$(echo "$all_issue_ids" | awk 'NF' | sort -n | uniq)"
 
 mkdir -p "$tmp_dir/issues"
 
@@ -72,30 +91,46 @@ for idx in "${!workflow_files[@]}"; do
   run_groups_payload="$(jq -c --arg wf "$wf_label" --argjson runs "$runs_json" '. + [{workflow: $wf, runs: $runs}]' <<< "$run_groups_payload")"
 done
 
+missions_json='[]'
+for mcfg in "${mission_configs[@]}"; do
+  mission_entry="$(jq -n \
+    --argjson cfg "$(cat "$mcfg")" \
+    --argjson issues "$issues_json" '
+    {
+      id: ($cfg.mission.id // "default"),
+      name: ($cfg.mission.name // $cfg.mission.id // "default"),
+      status: ($cfg.mission.status // "active"),
+      baseBranch: ($cfg.mission.baseBranch // "main"),
+      missionBranch: ($cfg.mission.missionBranch // "main"),
+      waveGateRequired: ($cfg.autonomy.waveGateRequired // false),
+      waves: (
+        $cfg.waves
+        | to_entries
+        | sort_by(.key | tonumber)
+        | map({
+            id: (.key | tonumber),
+            gateIssueId: ($cfg.waveGates[.key] // null),
+            issues: [
+              (.value | if type == "object" then .issues else . end)[] as $issueId
+              | ($issues[] | select(.number == $issueId))
+            ]
+          })
+      )
+    }
+  ')"
+  missions_json="$(jq -c --argjson m "$mission_entry" '. + [$m]' <<< "$missions_json")"
+done
+
 final_json="$(jq -n \
   --arg repo "$REPO" \
   --arg generatedAt "$(date '+%Y-%m-%d %H:%M:%S %Z')" \
-  --argjson cfg "$(cat "$tmp_dir/pipeline-config.json")" \
-  --argjson issues "$issues_json" \
+  --argjson missions "$missions_json" \
   --argjson openPrs "$open_prs_json" \
   --argjson runGroups "$run_groups_payload" '
   {
     repo: $repo,
     generatedAt: $generatedAt,
-    waveGateRequired: ($cfg.autonomy.waveGateRequired // false),
-    waves: (
-      $cfg.waves
-      | to_entries
-      | sort_by(.key | tonumber)
-      | map({
-          id: (.key | tonumber),
-          gateIssueId: ($cfg.waveGates[.key] // null),
-          issues: [
-            .value[] as $issueId
-            | ($issues[] | select(.number == $issueId))
-          ]
-        })
-    ),
+    missions: $missions,
     openPrs: $openPrs,
     recentRuns: $runGroups
   }
