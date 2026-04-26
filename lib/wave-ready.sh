@@ -13,11 +13,18 @@ source "${SCRIPT_DIR}/waves.sh"
 
 MISSIONS_DIR=".github/missions"
 TOKEN="${GH_TOKEN}"
+# PAT with PR creation permissions (GITHUB_TOKEN may lack this)
+PAT="${GH_PAT_PORTAL:-$TOKEN}"
 REPO="${GITHUB_REPOSITORY}"
 REPO_NAME=$(basename "$REPO")
 
 gh_auth() {
   GH_TOKEN="$TOKEN" gh "$@"
+}
+
+# Use PAT for operations that GITHUB_TOKEN may not be allowed to do
+gh_pat() {
+  GH_TOKEN="$PAT" gh "$@"
 }
 
 notify_slack() {
@@ -80,7 +87,7 @@ create_final_pr_if_needed() {
   pr_title="feat(${mission_id}): complete mission"
   pr_body=$(printf '## Mission `%s` — Final PR\n\nAll waves complete. This PR merges the full mission branch into `%s`.\n\n### Issues included\n%s\n### Review\nReview the combined changes, approve, and merge.' "$mission_id" "$base_branch" "$all_issues")
 
-  final_pr=$(gh_auth pr create \
+  final_pr=$(gh_pat pr create \
     --base "$base_branch" \
     --head "$mission_branch" \
     --title "$pr_title" \
@@ -501,9 +508,9 @@ for CONFIG in $(mission_list_active_configs "$MISSIONS_DIR"); do
     TITLE="feat(${MISSION_ID}/wave-$WAVE): consolidate ${#CHILD_REFS[@]} completed tasks"
 
     if [ -n "$OPEN_WAVE_PR_NUMBER" ]; then
-      gh_auth pr edit "$OPEN_WAVE_PR_NUMBER" --title "$TITLE" --body-file "$BODY_FILE"
+      gh_pat pr edit "$OPEN_WAVE_PR_NUMBER" --title "$TITLE" --body-file "$BODY_FILE"
     else
-      gh_auth pr create --base "$MISSION_BRANCH" --head "$CONSOLIDATED_BRANCH" --title "$TITLE" --body-file "$BODY_FILE"
+      gh_pat pr create --base "$MISSION_BRANCH" --head "$CONSOLIDATED_BRANCH" --title "$TITLE" --body-file "$BODY_FILE"
       PR_CREATED=true
     fi
 
