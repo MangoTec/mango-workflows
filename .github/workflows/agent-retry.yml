@@ -56,9 +56,20 @@ jobs:
 
             if [ -n "${SLACK_WEBHOOK_URL:-}" ]; then
               TITLE=$(gh issue view "$ISSUE_NUMBER" --json title --jq '.title')
+              ISSUE_URL="https://github.com/${{ github.repository }}/issues/${ISSUE_NUMBER}"
+              RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+              REPO_NAME="${{ github.repository }}"
+              SLACK_MSG=$(printf '%s\n' \
+                "🚨 *Pipeline bloqueada — requiere intervención humana*" \
+                "• Repo: \`${REPO_NAME}\`" \
+                "• Issue: <${ISSUE_URL}|#${ISSUE_NUMBER}> — ${TITLE}" \
+                "• Reintentos: ${MAX_RETRIES}/${MAX_RETRIES}" \
+                "• Estado: \`needs-human\`" \
+                "• Run: <${RUN_URL}|ver ejecución>" \
+                "• Acción: revisar logs y decidir siguiente proveedor/estrategia")
               curl -sf -X POST "$SLACK_WEBHOOK_URL" \
                 -H "Content-Type: application/json" \
-                -d "{\"text\": \"🚨 *Agente falló $MAX_RETRIES veces* en <https://github.com/${{ github.repository }}/issues/${ISSUE_NUMBER}|#${ISSUE_NUMBER}>: ${TITLE} — se requiere intervención manual\"}" || true
+                -d "{\"text\": $(echo "$SLACK_MSG" | jq -Rs .)}" || true
             fi
             exit 0
           fi
@@ -89,7 +100,18 @@ jobs:
 
           if [ -n "${SLACK_WEBHOOK_URL:-}" ]; then
             TITLE=$(gh issue view "$ISSUE_NUMBER" --json title --jq '.title')
+            ISSUE_URL="https://github.com/${{ github.repository }}/issues/${ISSUE_NUMBER}"
+            RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            REPO_NAME="${{ github.repository }}"
+            SLACK_MSG=$(printf '%s\n' \
+              "🔄 *Pipeline retry disparado*" \
+              "• Repo: \`${REPO_NAME}\`" \
+              "• Issue: <${ISSUE_URL}|#${ISSUE_NUMBER}> — ${TITLE}" \
+              "• Reintento: ${NEXT_RETRY}/${MAX_RETRIES}" \
+              "• Próximo provider: \`${NEXT_PROVIDER}\`" \
+              "• Estado: \`status:ready\` (re-encolado)" \
+              "• Run: <${RUN_URL}|ver ejecución>")
             curl -sf -X POST "$SLACK_WEBHOOK_URL" \
               -H "Content-Type: application/json" \
-              -d "{\"text\": \"🔄 *Retry $NEXT_RETRY* con \`$NEXT_PROVIDER\` en <https://github.com/${{ github.repository }}/issues/${ISSUE_NUMBER}|#${ISSUE_NUMBER}>: ${TITLE}\"}" || true
+              -d "{\"text\": $(echo "$SLACK_MSG" | jq -Rs .)}" || true
           fi

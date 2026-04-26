@@ -91,7 +91,13 @@ jobs:
               fi
             fi
 
-            mapfile -t ISSUE_NUMBERS < <(jq -r ".waves[\"$WAVE\"][]" "$CONFIG")
+            # v4: waves can be objects with .issues array, or v3 plain arrays
+            WAVE_IS_OBJECT=$(jq -r ".waves[\"$WAVE\"] | type" "$CONFIG")
+            if [ "$WAVE_IS_OBJECT" = "object" ]; then
+              mapfile -t ISSUE_NUMBERS < <(jq -r ".waves[\"$WAVE\"].issues[]" "$CONFIG")
+            else
+              mapfile -t ISSUE_NUMBERS < <(jq -r ".waves[\"$WAVE\"][]" "$CONFIG")
+            fi
 
             if [ "${#ISSUE_NUMBERS[@]}" -eq 0 ]; then
               continue
@@ -162,7 +168,14 @@ jobs:
               if ! git merge --no-ff --no-edit FETCH_HEAD; then
                 git merge --abort || true
 
-                CONFLICT_MESSAGE="🔴 *Wave $WAVE no pudo consolidarse* en \`$REPO_NAME\`: conflicto al mergear <${CHILD_URLS[$index]}|PR #$PR_NUMBER> para issue #$ISSUE_NUMBER."
+                RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+                CONFLICT_MESSAGE=$(printf '%s\n' \
+                  "🔴 *Consolidación fallida en wave ${WAVE}*" \
+                  "• Repo: \`${REPO_NAME}\`" \
+                  "• PR en conflicto: <${CHILD_URLS[$index]}|#${PR_NUMBER}> (issue #${ISSUE_NUMBER})" \
+                  "• Branch objetivo: \`${CONSOLIDATED_BRANCH}\`" \
+                  "• Run: <${RUN_URL}|ver ejecución>" \
+                  "• Acción: resolver conflicto en PR hija y relanzar workflow")
                 notify_slack "$CONFLICT_MESSAGE"
 
                 if [ -n "$GATE_ISSUE" ] && [ "$GATE_ISSUE" != "null" ]; then
@@ -221,13 +234,71 @@ jobs:
               fi
 
               if jq -e ".waves[\"$NEXT_WAVE\"]" "$CONFIG" >/dev/null 2>&1; then
-                SLACK_MESSAGE="🟢 *Wave $WAVE lista para revisión* en \`$REPO_NAME\`: <${WAVE_PR_URL}|PR #${WAVE_PR_NUMBER}> consolida ${#CHILD_REFS[@]} tareas. Al mergearse, arranca wave $NEXT_WAVE automáticamente."
+                RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+                SLACK_MESSAGE=$(printf '%s\n' \
+                  "🟢 *Wave ${WAVE} lista para revisión*" \
+                  "• Repo: \`${REPO_NAME}\`" \
+                  "• PR consolidada: <${WAVE_PR_URL}|#${WAVE_PR_NUMBER}>" \
+                  "• Tareas incluidas: ${#CHILD_REFS[@]}" \
+                  "• Siguiente paso: mergear PR para arrancar wave ${NEXT_WAVE}" \
+                  "• Run: <${RUN_URL}|ver ejecución>")
               else
-                SLACK_MESSAGE="🟢 *Wave $WAVE lista para revisión* en \`$REPO_NAME\`: <${WAVE_PR_URL}|PR #${WAVE_PR_NUMBER}> consolida ${#CHILD_REFS[@]} tareas. Al mergearse, termina la pipeline."
+                RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+                SLACK_MESSAGE=$(printf '%s\n' \
+                  "🟢 *Wave ${WAVE} lista para revisión (final)*" \
+                  "• Repo: \`${REPO_NAME}\`" \
+                  "• PR consolidada: <${WAVE_PR_URL}|#${WAVE_PR_NUMBER}>" \
+                  "• Tareas incluidas: ${#CHILD_REFS[@]}" \
+                  "• Siguiente paso: mergear PR para finalizar la pipeline" \
+                  "• Run: <${RUN_URL}|ver ejecución>")
               fi
 
               notify_slack "$SLACK_MESSAGE"
             fi
 
             rm -f "$BODY_FILE"
+
+            # ─── v4: Cleanup after consolidation ───
+            CLEANUP_BRANCHES=$(jq -r '.cleanup.deleteMergedTaskBranches // false' "$CONFIG")
+            CLEANUP_LABELS=$(jq -r '.cleanup.removeLabelsOnComplete // false' "$CONFIG")
+            CLEANUP_GATES=$(jq -r '.cleanup.closeResolvedGateIssues // false' "$CONFIG")
+
+            if [ "$CLEANUP_BRANCHES" = "true" ]; then
+              echo "Cleanup: checking for merged task branches in wave $WAVE"
+              for index in "${!CHILD_REFS[@]}"; do
+                REF_NAME="${CHILD_REFS[$index]}"
+                PR_NUMBER="${CHILD_PRS[$index]}"
+                # Only delete if the task PR has been merged into the consolidated branch
+                if git branch -r --merged "$CONSOLIDATED_BRANCH" | grep -q "origin/$REF_NAME"; then
+                  echo "Deleting merged task branch: $REF_NAME"
+                  git push origin --delete "$REF_NAME" 2>/dev/null || true
+                fi
+              done
+            fi
+
+            if [ "$CLEANUP_LABELS" = "true" ]; then
+              echo "Cleanup: removing pipeline labels from consolidated issues"
+              PIPELINE_LABELS="status:ready status:in-progress status:blocked status:failed status:spec-invalid needs-human"
+              for issue_num in "${CHILD_ISSUES[@]}"; do
+                for label in $PIPELINE_LABELS; do
+                  gh_auth issue edit "$issue_num" --remove-label "$label" 2>/dev/null || true
+                done
+              done
+            fi
+
+            if [ "$CLEANUP_GATES" = "true" ]; then
+              # Check previous waves' gate issues — close if wave is already merged
+              PREV_WAVE=$((WAVE - 1))
+              if [ "$PREV_WAVE" -ge 0 ]; then
+                PREV_GATE=$(jq -r ".waveGates[\"$PREV_WAVE\"] // empty" "$CONFIG")
+                if [ -n "$PREV_GATE" ] && [ "$PREV_GATE" != "null" ]; then
+                  PREV_GATE_STATE=$(gh_auth issue view "$PREV_GATE" --json state --jq '.state' 2>/dev/null || echo "UNKNOWN")
+                  if [ "$PREV_GATE_STATE" = "OPEN" ]; then
+                    echo "Cleanup: closing resolved gate issue #$PREV_GATE"
+                    gh_auth issue close "$PREV_GATE" --reason completed 2>/dev/null || true
+                  fi
+                fi
+              fi
+            fi
+
           done

@@ -1,0 +1,54 @@
+{
+  "mission": {
+    "id": "test-mission",
+    "name": "Test Mission",
+    "specSource": "specs/test-mission/spec.md"
+  },
+  "agents": {
+    "primary": "copilot",
+    "fallbackProvider": "codex",
+    "model": "claude-sonnet-4"
+  },
+  "autonomy": {
+    "level": "human-gate-pr",
+    "maxRetries": 2,
+    "waveGateRequired": true
+  },
+  "specLinter": {
+    "minBodyLength": 200,
+    "requiredSections": ["Requirements", "Acceptance Criteria"],
+    "validateFileRefs": true,
+    "requireSpecSource": true
+  },
+  "waves": {
+    "0": {
+      "issues": [40, 41],
+      "gate": "auto"
+    },
+    "1": {
+      "issues": [42, 43, 44],
+      "gate": "verify-then-auto",
+      "verify": ["verify:build", "verify:types"]
+    },
+    "2": {
+      "issues": [45, 46],
+      "gate": "human"
+    }
+  },
+  "waveGates": {
+    "1": 50,
+    "2": 51
+  },
+  "verification": {
+    "hooks": {
+      "verify:build": "npm run build 2>&1 | tail -20",
+      "verify:types": "npx tsc --noEmit 2>&1 | tail -20",
+      "verify:lint": "npm run lint 2>&1 | tail -20"
+    }
+  },
+  "cleanup": {
+    "deleteMergedTaskBranches": true,
+    "removeLabelsOnComplete": true,
+    "closeResolvedGateIssues": true
+  }
+}

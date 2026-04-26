@@ -51,6 +51,12 @@ jobs:
           echo "min_body=$(echo "$CONFIG" | jq -r '.specLinter.minBodyLength // 200')" >> "$GITHUB_OUTPUT"
           SECTIONS=$(echo "$CONFIG" | jq -r '(.specLinter.requiredSections // ["Requirements","Acceptance Criteria"]) | join("|")')
           echo "required_sections=$SECTIONS" >> "$GITHUB_OUTPUT"
+          echo "validate_file_refs=$(echo "$CONFIG" | jq -r '.specLinter.validateFileRefs // false')" >> "$GITHUB_OUTPUT"
+          echo "require_spec_source=$(echo "$CONFIG" | jq -r '.specLinter.requireSpecSource // false')" >> "$GITHUB_OUTPUT"
+
+          # Mission (v4)
+          echo "mission_id=$(echo "$CONFIG" | jq -r '.mission.id // empty')" >> "$GITHUB_OUTPUT"
+          echo "spec_source=$(echo "$CONFIG" | jq -r '.mission.specSource // empty')" >> "$GITHUB_OUTPUT"
 
           # Autonomy
           echo "auto_assign=$(echo "$CONFIG" | jq -r '.autonomy.autoAssignAgent // true')" >> "$GITHUB_OUTPUT"
@@ -82,6 +88,10 @@ jobs:
           ISSUE_NUMBER: ${{ inputs.issue-number }}
           MIN_BODY: ${{ steps.config.outputs.min_body }}
           REQUIRED_SECTIONS: ${{ steps.config.outputs.required_sections }}
+          VALIDATE_FILE_REFS: ${{ steps.config.outputs.validate_file_refs }}
+          REQUIRE_SPEC_SOURCE: ${{ steps.config.outputs.require_spec_source }}
+          MISSION_ID: ${{ steps.config.outputs.mission_id }}
+          SPEC_SOURCE: ${{ steps.config.outputs.spec_source }}
         run: |
           BODY=$(gh issue view "$ISSUE_NUMBER" --json body --jq '.body')
           BODY_LENGTH=${#BODY}
@@ -100,6 +110,24 @@ jobs:
             fi
           done
 
+          # v4: Validate file references in spec body
+          if [ "$VALIDATE_FILE_REFS" = "true" ]; then
+            # Extract file paths from markdown code blocks and backtick references
+            FILE_REFS=$(echo "$BODY" | grep -oE '`[a-zA-Z0-9_./-]+\.(ts|tsx|js|jsx|php|yml|yaml|json|md|css|html)`' | tr -d '`' | sort -u)
+            for ref in $FILE_REFS; do
+              if [ ! -f "$ref" ]; then
+                ERRORS="$ERRORS- Referenced file not found in repo: \`$ref\`\n"
+              fi
+            done
+          fi
+
+          # v4: Require spec to mention mission source-of-truth
+          if [ "$REQUIRE_SPEC_SOURCE" = "true" ] && [ -n "$SPEC_SOURCE" ]; then
+            if ! echo "$BODY" | grep -qF "$SPEC_SOURCE"; then
+              ERRORS="$ERRORS- Spec does not reference mission source-of-truth: \`$SPEC_SOURCE\`\n"
+            fi
+          fi
+
           if [ -n "$ERRORS" ]; then
             echo "valid=false" >> "$GITHUB_OUTPUT"
             COMMENT=$(printf "⚠️ **Spec Linter**: Issue doesn't meet agent requirements.\n\n%b\nFix the spec and re-add \`status:ready\`." "$ERRORS")
@@ -107,7 +135,7 @@ jobs:
             gh issue edit "$ISSUE_NUMBER" --remove-label "status:ready" --add-label "status:spec-invalid" 2>/dev/null || true
           else
             echo "valid=true" >> "$GITHUB_OUTPUT"
-            echo "Spec OK (${BODY_LENGTH} chars)"
+            echo "Spec OK (${BODY_LENGTH} chars, mission: ${MISSION_ID:-none})"
           fi
 
       - name: Skip — manual mode
@@ -171,21 +199,33 @@ jobs:
             --add-label "status:in-progress"
 
           TITLE=$(gh issue view "$ISSUE_NUMBER" --json title --jq '.title')
+          REPO_NAME="${{ github.repository }}"
+          ISSUE_URL="https://github.com/${{ github.repository }}/issues/${ISSUE_NUMBER}"
+          RUN_URL="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
           if [ "$PROVIDER" = "copilot" ]; then
             gh issue comment "$ISSUE_NUMBER" --body "🤖 **Pipeline**: Routing to Copilot.\n\n@copilot please implement this issue according to the specification in the issue body, create a branch, and open a PR to main. Important: include \`Closes #$ISSUE_NUMBER\` in the PR body so issue automation can continue the wave pipeline."
             EMOJI="🤖"
+            PROVIDER_LABEL="Copilot"
           elif [ "$PROVIDER" = "codex" ]; then
             gh issue comment "$ISSUE_NUMBER" --body "🧠 **Pipeline**: Codex dispatched (model: ${{ steps.config.outputs.codex_model }})."
             EMOJI="🧠"
+            PROVIDER_LABEL="Codex"
           else
             gh issue comment "$ISSUE_NUMBER" --body "⚠️ **Pipeline**: Unknown provider \`$PROVIDER\`."
             EMOJI="⚠️"
+            PROVIDER_LABEL="$PROVIDER"
           fi
 
           if [ -n "${SLACK_WEBHOOK_URL:-}" ]; then
-            SLUG="${PROVIDER^}"
-            SLACK_MSG="${EMOJI} *${SLUG} asignado* a <https://github.com/${{ github.repository }}/issues/${ISSUE_NUMBER}|#${ISSUE_NUMBER}>: ${TITLE}"
+            SLACK_MSG=$(printf '%s\n' \
+              "${EMOJI} *Pipeline en progreso — agente asignado*" \
+              "• Repo: \`${REPO_NAME}\`" \
+              "• Issue: <${ISSUE_URL}|#${ISSUE_NUMBER}> — ${TITLE}" \
+              "• Provider: ${PROVIDER_LABEL}" \
+              "• Actor: @${{ github.actor }}" \
+              "• Run: <${RUN_URL}|ver ejecución>" \
+              "• Estado: \`status:in-progress\`")
             curl -sf -X POST "$SLACK_WEBHOOK_URL" \
               -H "Content-Type: application/json" \
               -d "{\"text\": $(echo "$SLACK_MSG" | jq -Rs .)}" || true

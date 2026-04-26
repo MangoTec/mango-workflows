@@ -1,0 +1,590 @@
+{
+  "repo": "MangoTec/mango-portal",
+  "generatedAt": "2026-04-20 18:07:03 CST",
+  "waveGateRequired": true,
+  "waves": [
+    {
+      "id": 0,
+      "gateIssueId": 24,
+      "issues": [
+        {
+          "number": 23,
+          "state": "OPEN",
+          "title": "feat: Foundation — copy mango-cobros frontend infra + autonomous agent pipeline",
+          "url": "https://github.com/MangoTec/mango-portal/issues/23",
+          "labels": [
+            "copilot:agent",
+            "feature",
+            "wave-0",
+            "priority-p1",
+            "status:in-progress"
+          ],
+          "assignees": [
+            "Copilot",
+            "lobitodemango"
+          ],
+          "statusClass": "inprogress"
+        }
+      ]
+    },
+    {
+      "id": 1,
+      "gateIssueId": 25,
+      "issues": [
+        {
+          "number": 6,
+          "state": "OPEN",
+          "title": "feat: Custom error boundary, 404 page, and error states",
+          "url": "https://github.com/MangoTec/mango-portal/issues/6",
+          "labels": [
+            "copilot:agent",
+            "feature",
+            "wave-1",
+            "priority-p1",
+            "status:in-progress"
+          ],
+          "assignees": [
+            "Copilot",
+            "lobitodemango"
+          ],
+          "statusClass": "inprogress"
+        },
+        {
+          "number": 7,
+          "state": "OPEN",
+          "title": "feat: Reusable empty state component",
+          "url": "https://github.com/MangoTec/mango-portal/issues/7",
+          "labels": [
+            "enhancement",
+            "copilot:agent",
+            "wave-1",
+            "priority-p2",
+            "status:ready",
+            "status:in-progress"
+          ],
+          "assignees": [
+            "Copilot",
+            "lobitodemango"
+          ],
+          "statusClass": "inprogress"
+        },
+        {
+          "number": 18,
+          "state": "OPEN",
+          "title": "feat: Add Select, Tooltip, Dialog UI components",
+          "url": "https://github.com/MangoTec/mango-portal/issues/18",
+          "labels": [
+            "enhancement",
+            "copilot:agent",
+            "wave-1",
+            "priority-p1",
+            "status:in-progress"
+          ],
+          "assignees": [
+            "Copilot",
+            "lobitodemango"
+          ],
+          "statusClass": "inprogress"
+        },
+        {
+          "number": 14,
+          "state": "OPEN",
+          "title": "feat: Breadcrumbs navigation component",
+          "url": "https://github.com/MangoTec/mango-portal/issues/14",
+          "labels": [
+            "enhancement",
+            "copilot:agent",
+            "wave-1",
+            "priority-p2",
+            "status:in-progress"
+          ],
+          "assignees": [
+            "Copilot",
+            "lobitodemango"
+          ],
+          "statusClass": "inprogress"
+        },
+        {
+          "number": 15,
+          "state": "OPEN",
+          "title": "feat: Dynamic page titles and metadata",
+          "url": "https://github.com/MangoTec/mango-portal/issues/15",
+          "labels": [
+            "enhancement",
+            "copilot:agent",
+            "wave-1",
+            "priority-p2",
+            "status:in-progress"
+          ],
+          "assignees": [
+            "Copilot",
+            "lobitodemango"
+          ],
+          "statusClass": "inprogress"
+        },
+        {
+          "number": 16,
+          "state": "OPEN",
+          "title": "feat: Loading skeleton UI (loading.tsx) for all routes",
+          "url": "https://github.com/MangoTec/mango-portal/issues/16",
+          "labels": [
+            "enhancement",
+            "copilot:agent",
+            "wave-1",
+            "priority-p1",
+            "status:in-progress"
+          ],
+          "assignees": [
+            "Copilot",
+            "lobitodemango"
+          ],
+          "statusClass": "inprogress"
+        },
+        {
+          "number": 20,
+          "state": "OPEN",
+          "title": "refactor: Extract reusable Pagination component",
+          "url": "https://github.com/MangoTec/mango-portal/issues/20",
+          "labels": [
+            "enhancement",
+            "copilot:agent",
+            "wave-1",
+            "priority-p1",
+            "status:in-progress"
+          ],
+          "assignees": [
+            "Copilot",
+            "lobitodemango"
+          ],
+          "statusClass": "inprogress"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "gateIssueId": 26,
+      "issues": [
+        {
+          "number": 1,
+          "state": "OPEN",
+          "title": "feat: Payment detail view /pagos/[id]",
+          "url": "https://github.com/MangoTec/mango-portal/issues/1",
+          "labels": [
+            "copilot:agent",
+            "feature",
+            "wave-2",
+            "priority-p1",
+            "status:blocked"
+          ],
+          "assignees": [],
+          "statusClass": "blocked"
+        },
+        {
+          "number": 2,
+          "state": "OPEN",
+          "title": "feat: Facturas (supplier invoices) page with real data",
+          "url": "https://github.com/MangoTec/mango-portal/issues/2",
+          "labels": [
+            "copilot:agent",
+            "feature",
+            "wave-2",
+            "priority-p1",
+            "status:blocked"
+          ],
+          "assignees": [],
+          "statusClass": "blocked"
+        },
+        {
+          "number": 3,
+          "state": "OPEN",
+          "title": "feat: Créditos (payment credits) page with real data",
+          "url": "https://github.com/MangoTec/mango-portal/issues/3",
+          "labels": [
+            "copilot:agent",
+            "feature",
+            "wave-2",
+            "priority-p1",
+            "status:blocked"
+          ],
+          "assignees": [],
+          "statusClass": "blocked"
+        },
+        {
+          "number": 12,
+          "state": "OPEN",
+          "title": "feat: Penalizaciones page with supplier penalty history",
+          "url": "https://github.com/MangoTec/mango-portal/issues/12",
+          "labels": [
+            "copilot:agent",
+            "feature",
+            "wave-2",
+            "priority-p2",
+            "status:blocked"
+          ],
+          "assignees": [],
+          "statusClass": "blocked"
+        },
+        {
+          "number": 13,
+          "state": "OPEN",
+          "title": "feat: Supplier profile/details page",
+          "url": "https://github.com/MangoTec/mango-portal/issues/13",
+          "labels": [
+            "copilot:agent",
+            "feature",
+            "wave-2",
+            "priority-p2",
+            "status:blocked"
+          ],
+          "assignees": [],
+          "statusClass": "blocked"
+        },
+        {
+          "number": 8,
+          "state": "OPEN",
+          "title": "feat: Dashboard payment volume chart (monthly trends)",
+          "url": "https://github.com/MangoTec/mango-portal/issues/8",
+          "labels": [
+            "copilot:agent",
+            "feature",
+            "wave-2",
+            "priority-p2",
+            "status:blocked"
+          ],
+          "assignees": [],
+          "statusClass": "blocked"
+        },
+        {
+          "number": 9,
+          "state": "OPEN",
+          "title": "feat: Customer dropdown filter on payment table",
+          "url": "https://github.com/MangoTec/mango-portal/issues/9",
+          "labels": [
+            "enhancement",
+            "copilot:agent",
+            "wave-2",
+            "priority-p2",
+            "status:blocked"
+          ],
+          "assignees": [],
+          "statusClass": "blocked"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "gateIssueId": 27,
+      "issues": [
+        {
+          "number": 4,
+          "state": "OPEN",
+          "title": "feat: Export payments to CSV/Excel",
+          "url": "https://github.com/MangoTec/mango-portal/issues/4",
+          "labels": [
+            "enhancement",
+            "copilot:agent",
+            "wave-3",
+            "priority-p2",
+            "status:blocked"
+          ],
+          "assignees": [],
+          "statusClass": "blocked"
+        },
+        {
+          "number": 5,
+          "state": "OPEN",
+          "title": "feat: Responsive mobile layout with collapsible sidebar",
+          "url": "https://github.com/MangoTec/mango-portal/issues/5",
+          "labels": [
+            "copilot:agent",
+            "feature",
+            "wave-3",
+            "priority-p2",
+            "status:blocked"
+          ],
+          "assignees": [],
+          "statusClass": "blocked"
+        },
+        {
+          "number": 10,
+          "state": "OPEN",
+          "title": "feat: Quick date range presets for payment filters",
+          "url": "https://github.com/MangoTec/mango-portal/issues/10",
+          "labels": [
+            "enhancement",
+            "copilot:agent",
+            "wave-3",
+            "priority-p3",
+            "status:blocked"
+          ],
+          "assignees": [],
+          "statusClass": "blocked"
+        },
+        {
+          "number": 11,
+          "state": "OPEN",
+          "title": "feat: Sortable columns on payment table",
+          "url": "https://github.com/MangoTec/mango-portal/issues/11",
+          "labels": [
+            "enhancement",
+            "copilot:agent",
+            "wave-3",
+            "priority-p3",
+            "status:blocked"
+          ],
+          "assignees": [],
+          "statusClass": "blocked"
+        },
+        {
+          "number": 21,
+          "state": "OPEN",
+          "title": "feat: Dark mode toggle and support",
+          "url": "https://github.com/MangoTec/mango-portal/issues/21",
+          "labels": [
+            "copilot:agent",
+            "feature",
+            "wave-3",
+            "priority-p3",
+            "status:blocked"
+          ],
+          "assignees": [],
+          "statusClass": "blocked"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "gateIssueId": null,
+      "issues": [
+        {
+          "number": 17,
+          "state": "OPEN",
+          "title": "fix: Sign out uses form POST but no API route handler exists",
+          "url": "https://github.com/MangoTec/mango-portal/issues/17",
+          "labels": [
+            "bug",
+            "copilot:agent",
+            "wave-4",
+            "priority-p1",
+            "status:blocked"
+          ],
+          "assignees": [],
+          "statusClass": "blocked"
+        },
+        {
+          "number": 19,
+          "state": "OPEN",
+          "title": "docs: Rewrite README.md with project documentation",
+          "url": "https://github.com/MangoTec/mango-portal/issues/19",
+          "labels": [
+            "enhancement",
+            "copilot:agent",
+            "wave-4",
+            "priority-p3",
+            "status:blocked"
+          ],
+          "assignees": [],
+          "statusClass": "blocked"
+        }
+      ]
+    }
+  ],
+  "openPrs": [
+    {
+      "author": {
+        "is_bot": true,
+        "login": "app/copilot-swe-agent"
+      },
+      "baseRefName": "main",
+      "headRefName": "copilot/refactor-extract-pagination-component",
+      "isDraft": true,
+      "number": 35,
+      "title": "refactor: Extract reusable Pagination component",
+      "url": "https://github.com/MangoTec/mango-portal/pull/35"
+    },
+    {
+      "author": {
+        "is_bot": true,
+        "login": "app/copilot-swe-agent"
+      },
+      "baseRefName": "main",
+      "headRefName": "copilot/feat-loading-skeleton-ui",
+      "isDraft": true,
+      "number": 34,
+      "title": "feat: loading skeleton UI (loading.tsx) for all routes",
+      "url": "https://github.com/MangoTec/mango-portal/pull/34"
+    },
+    {
+      "author": {
+        "is_bot": true,
+        "login": "app/copilot-swe-agent"
+      },
+      "baseRefName": "main",
+      "headRefName": "copilot/add-dynamic-page-titles",
+      "isDraft": true,
+      "number": 33,
+      "title": "feat: Dynamic page titles and metadata",
+      "url": "https://github.com/MangoTec/mango-portal/pull/33"
+    },
+    {
+      "author": {
+        "is_bot": true,
+        "login": "app/copilot-swe-agent"
+      },
+      "baseRefName": "main",
+      "headRefName": "copilot/add-breadcrumbs-navigation-component",
+      "isDraft": true,
+      "number": 32,
+      "title": "feat: Breadcrumbs navigation component",
+      "url": "https://github.com/MangoTec/mango-portal/pull/32"
+    },
+    {
+      "author": {
+        "is_bot": true,
+        "login": "app/copilot-swe-agent"
+      },
+      "baseRefName": "main",
+      "headRefName": "copilot/add-custom-error-boundary",
+      "isDraft": true,
+      "number": 31,
+      "title": "feat: error boundaries, 404 page, and reusable ErrorState component",
+      "url": "https://github.com/MangoTec/mango-portal/pull/31"
+    },
+    {
+      "author": {
+        "is_bot": true,
+        "login": "app/copilot-swe-agent"
+      },
+      "baseRefName": "main",
+      "headRefName": "copilot/add-select-tooltip-dialog-components",
+      "isDraft": true,
+      "number": 30,
+      "title": "feat: Add Select, Tooltip, Dialog UI components",
+      "url": "https://github.com/MangoTec/mango-portal/pull/30"
+    },
+    {
+      "author": {
+        "is_bot": true,
+        "login": "app/copilot-swe-agent"
+      },
+      "baseRefName": "main",
+      "headRefName": "copilot/add-reusable-empty-state-component",
+      "isDraft": true,
+      "number": 29,
+      "title": "feat: reusable EmptyState component + payments table integration",
+      "url": "https://github.com/MangoTec/mango-portal/pull/29"
+    }
+  ],
+  "recentRuns": [
+    {
+      "workflow": "Assign Agent",
+      "runs": [
+        {
+          "conclusion": "success",
+          "createdAt": "2026-04-20T23:50:26Z",
+          "displayTitle": "refactor: Extract reusable Pagination component",
+          "event": "issues",
+          "headBranch": "main",
+          "status": "completed",
+          "url": "https://github.com/MangoTec/mango-portal/actions/runs/24696351683"
+        },
+        {
+          "conclusion": "success",
+          "createdAt": "2026-04-20T23:50:23Z",
+          "displayTitle": "feat: Loading skeleton UI (loading.tsx) for all routes",
+          "event": "issues",
+          "headBranch": "main",
+          "status": "completed",
+          "url": "https://github.com/MangoTec/mango-portal/actions/runs/24696349862"
+        },
+        {
+          "conclusion": "success",
+          "createdAt": "2026-04-20T23:50:20Z",
+          "displayTitle": "feat: Dynamic page titles and metadata",
+          "event": "issues",
+          "headBranch": "main",
+          "status": "completed",
+          "url": "https://github.com/MangoTec/mango-portal/actions/runs/24696348103"
+        }
+      ]
+    },
+    {
+      "workflow": "Wave Gate",
+      "runs": [
+        {
+          "conclusion": "skipped",
+          "createdAt": "2026-04-20T23:50:26Z",
+          "displayTitle": "refactor: Extract reusable Pagination component",
+          "event": "issues",
+          "headBranch": "main",
+          "status": "completed",
+          "url": "https://github.com/MangoTec/mango-portal/actions/runs/24696351667"
+        },
+        {
+          "conclusion": "skipped",
+          "createdAt": "2026-04-20T23:50:23Z",
+          "displayTitle": "feat: Loading skeleton UI (loading.tsx) for all routes",
+          "event": "issues",
+          "headBranch": "main",
+          "status": "completed",
+          "url": "https://github.com/MangoTec/mango-portal/actions/runs/24696349857"
+        },
+        {
+          "conclusion": "skipped",
+          "createdAt": "2026-04-20T23:50:20Z",
+          "displayTitle": "feat: Dynamic page titles and metadata",
+          "event": "issues",
+          "headBranch": "main",
+          "status": "completed",
+          "url": "https://github.com/MangoTec/mango-portal/actions/runs/24696348105"
+        }
+      ]
+    },
+    {
+      "workflow": "On Issue Close",
+      "runs": [
+        {
+          "conclusion": "success",
+          "createdAt": "2026-04-18T23:01:12Z",
+          "displayTitle": "Test: Add hello.txt to root",
+          "event": "issues",
+          "headBranch": "main",
+          "status": "completed",
+          "url": "https://github.com/MangoTec/mango-portal/actions/runs/24615856054"
+        }
+      ]
+    },
+    {
+      "workflow": "CI",
+      "runs": [
+        {
+          "conclusion": "action_required",
+          "createdAt": "2026-04-20T23:59:56Z",
+          "displayTitle": "refactor: Extract reusable Pagination component",
+          "event": "pull_request",
+          "headBranch": "copilot/refactor-extract-pagination-component",
+          "status": "completed",
+          "url": "https://github.com/MangoTec/mango-portal/actions/runs/24696653104"
+        },
+        {
+          "conclusion": "action_required",
+          "createdAt": "2026-04-20T23:59:02Z",
+          "displayTitle": "feat: loading skeleton UI (loading.tsx) for all routes",
+          "event": "pull_request",
+          "headBranch": "copilot/feat-loading-skeleton-ui",
+          "status": "completed",
+          "url": "https://github.com/MangoTec/mango-portal/actions/runs/24696625342"
+        },
+        {
+          "conclusion": "action_required",
+          "createdAt": "2026-04-20T23:55:24Z",
+          "displayTitle": "feat: Add Select, Tooltip, Dialog UI components",
+          "event": "pull_request",
+          "headBranch": "copilot/add-select-tooltip-dialog-components",
+          "status": "completed",
+          "url": "https://github.com/MangoTec/mango-portal/actions/runs/24696511337"
+        }
+      ]
+    }
+  ]
+}
