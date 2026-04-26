@@ -475,6 +475,47 @@ for CONFIG in $(mission_list_active_configs "$MISSIONS_DIR"); do
       fi
     done
 
+    # ── Pre-PR verification gate ──────────────────────────────────
+    # Run verify hooks on the consolidated branch BEFORE creating/updating
+    # the PR. This catches broken tests, lint errors, and type errors early
+    # — before CI runs on the PR and before a human has to intervene.
+    VERIFY_FAILED=false
+    if [ "$(wave_get_gate_type "$CONFIG" "$WAVE")" = "verify-then-auto" ]; then
+      echo "Running pre-PR verification hooks on consolidated branch..."
+      npm ci --prefer-offline --no-audit 2>/dev/null || npm install 2>/dev/null || true
+
+      if ! run_verify_hooks "$CONFIG" "$WAVE"; then
+        VERIFY_FAILED=true
+        VERIFY_ERRORS=$(cat /tmp/wave-verify-errors.md 2>/dev/null || echo "Unknown verification failure")
+        RUN_URL="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+        # Notify on gate issue
+        if [ -n "$GATE_ISSUE" ] && [ "$GATE_ISSUE" != "null" ]; then
+          gh_auth issue comment "$GATE_ISSUE" --body "$(printf '🔴 **Pre-PR verification failed for wave %s.**\n\nThe consolidated branch did not pass verification hooks. PR was NOT created.\n\n%s\n\nRun: %s' "$WAVE" "$VERIFY_ERRORS" "$RUN_URL")"
+        fi
+
+        # Notify Slack
+        notify_slack "$(printf '%s\n' \
+          "🔴 *Verificación pre-PR falló en wave ${WAVE}*" \
+          "• Repo: \`${REPO_NAME}\`" \
+          "• Misión: \`${MISSION_ID}\`" \
+          "• La PR consolidada NO se creó" \
+          "• Run: <${RUN_URL}|ver ejecución>" \
+          "• Acción: corregir errores en las PRs hijas y relanzar")"
+
+        # Re-label task issues as needing fixes
+        for issue_num in "${CHILD_ISSUES[@]}"; do
+          gh_auth issue edit "$issue_num" --add-label "status:failed" 2>/dev/null || true
+          gh_auth issue comment "$issue_num" --body "$(printf '🔴 Pre-PR verification failed. Fix required before consolidation.\n\n%s' "$VERIFY_ERRORS")" 2>/dev/null || true
+        done
+
+        echo "::error::Pre-PR verification failed for wave $WAVE. PR not created."
+        continue
+      fi
+
+      echo "✅ Pre-PR verification passed for wave $WAVE"
+    fi
+
     BODY_FILE=$(mktemp)
     {
       echo "## Wave $WAVE Consolidation"
