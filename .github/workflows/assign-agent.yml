@@ -173,7 +173,7 @@ jobs:
           gh issue comment "$ISSUE_NUMBER" --body "🟢 **Pipeline**: Issue ready. Autonomy is \`manual-stages\` — assign agent manually."
 
       # ─── Provider: Copilot ───
-      - name: Instruct Copilot target branch
+      - name: Instruct Copilot target branch and TDD
         if: >
           steps.spec.outputs.valid == 'true' &&
           steps.config.outputs.auto_assign == 'true' &&
@@ -185,7 +185,29 @@ jobs:
           MISSION_BRANCH: ${{ steps.config.outputs.mission_branch }}
         run: |
           # Copilot reads issue comments for context — this MUST come before assignment
-          gh issue comment "$ISSUE_NUMBER" --body "$(printf '⚠️ **IMPORTANT — Target Branch**\n\nYour PR MUST target the branch \`%s\` (NOT \`main\`).\nInclude \`Closes #%s\` in the PR body.' "$MISSION_BRANCH" "$ISSUE_NUMBER")"
+          COMMENT=$(cat <<'INSTRUCTIONS'
+          ⚠️ **IMPORTANT — Mandatory Instructions**
+
+          **Target Branch**: Your PR MUST target the branch `MISSION_BRANCH_PLACEHOLDER` (NOT `main`).
+          Include `Closes #ISSUE_PLACEHOLDER` in the PR body.
+
+          **Testing (TDD — mandatory)**:
+          Every file you create or modify MUST have a corresponding test. Follow these rules:
+          - New Zod schemas → Vitest unit test (validation happy + error paths)
+          - New TypeScript types/constants → Vitest unit test verifying exports and structure
+          - New config files (routes, permissions) → Vitest unit test for route definitions and permission mappings
+          - New server actions → Vitest unit test (success + error + validation failure)
+          - New hooks → Vitest unit test (jsdom project, state transitions)
+          - New components → Storybook story (default + variants + edge states)
+
+          Place unit tests in `src/features/[feature]/__tests__/[module].test.ts`.
+          Use descriptive test names: `it('should ...')`.
+          Do NOT skip tests. A PR without tests will be rejected.
+          INSTRUCTIONS
+          )
+          COMMENT="${COMMENT//MISSION_BRANCH_PLACEHOLDER/$MISSION_BRANCH}"
+          COMMENT="${COMMENT//ISSUE_PLACEHOLDER/$ISSUE_NUMBER}"
+          gh issue comment "$ISSUE_NUMBER" --body "$COMMENT"
 
       - name: Assign Copilot
         if: >
