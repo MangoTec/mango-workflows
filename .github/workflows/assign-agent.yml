@@ -66,7 +66,7 @@ jobs:
           echo "max_retries=$(cfg_max_retries "$CONFIG_PATH")" >> "$GITHUB_OUTPUT"
 
           # Copilot
-          echo "copilot_user=$(jq -r '.agent.providers.copilot.username // "copilot-swe-agent"' "$CONFIG_PATH")" >> "$GITHUB_OUTPUT"
+          echo "copilot_user=$(jq -r '.agent.providers.copilot.username // "Copilot"' "$CONFIG_PATH")" >> "$GITHUB_OUTPUT"
 
           # Codex
           echo "codex_model=$(jq -r '.agent.providers.codex.model // "gpt-5.4"' "$CONFIG_PATH")" >> "$GITHUB_OUTPUT"
@@ -307,7 +307,7 @@ jobs:
           if [ "$PROVIDER" = "copilot" ]; then
             MISSION_BRANCH="${{ steps.config.outputs.mission_branch }}"
             # Informational comment for humans (assignment handled by dedicated step above)
-            gh issue comment "$ISSUE_NUMBER" --body "$(printf '🤖 **Pipeline**: Assigned `copilot-swe-agent` to implement this issue (mission: `%s`, target branch: `%s`).' "${{ steps.config.outputs.mission_id }}" "$MISSION_BRANCH")"
+            gh issue comment "$ISSUE_NUMBER" --body "$(printf '🤖 **Pipeline**: Assigned `Copilot` to implement this issue (mission: `%s`, target branch: `%s`).' "${{ steps.config.outputs.mission_id }}" "$MISSION_BRANCH")"
             EMOJI="🤖"
             PROVIDER_LABEL="Copilot"
           elif [ "$PROVIDER" = "codex" ]; then
