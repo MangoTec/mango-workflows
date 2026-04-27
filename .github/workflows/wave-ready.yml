@@ -37,9 +37,15 @@ jobs:
           path: .mango-workflows
           sparse-checkout: lib
 
+      - name: Setup Node.js for verification
+        if: ${{ hashFiles('.nvmrc') != '' }}
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+
       - name: Create, update, or finalize consolidated PRs
         env:
           GH_TOKEN: ${{ github.token }}
           GH_PAT_PORTAL: ${{ secrets.GH_PAT_PORTAL }}
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL || secrets.DEPLOYMENTS_SLACK_WEBHOOK_URL || secrets.SLACK_WEBHOOK }}
         run: bash .mango-workflows/lib/wave-ready.sh

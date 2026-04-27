@@ -293,7 +293,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           ISSUE_NUMBER: ${{ inputs.issue-number }}
           PROVIDER: ${{ steps.provider.outputs.provider }}
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL || secrets.DEPLOYMENTS_SLACK_WEBHOOK_URL || secrets.SLACK_WEBHOOK }}
         run: |
           gh issue edit "$ISSUE_NUMBER" \
             --remove-label "status:ready" \

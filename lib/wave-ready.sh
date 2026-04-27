@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Wave Ready — main logic for consolidated PR creation and finalization.
 # Called from .github/workflows/wave-ready.yml
-# Expects: GH_TOKEN, GH_PAT_PORTAL, SLACK_WEBHOOK_URL, GITHUB_REPOSITORY,
-#           GITHUB_RUN_ID, GITHUB_EVENT_PATH env vars.
+# Expects: GH_TOKEN, GH_PAT_PORTAL, SLACK_WEBHOOK_URL (or fallback secret),
+#           GITHUB_REPOSITORY, GITHUB_RUN_ID, GITHUB_EVENT_PATH env vars.
 
 set -euo pipefail
 # shellcheck disable=SC2016
@@ -17,6 +17,7 @@ TOKEN="${GH_TOKEN}"
 PAT="${GH_PAT_PORTAL:-$TOKEN}"
 REPO="${GITHUB_REPOSITORY}"
 REPO_NAME=$(basename "$REPO")
+VERIFY_DEPS_READY=false
 
 gh_auth() {
   GH_TOKEN="$TOKEN" gh "$@"
@@ -31,12 +32,70 @@ notify_slack() {
   local message="$1"
 
   if [ -z "${SLACK_WEBHOOK_URL:-}" ]; then
+    echo "::warning::Slack webhook is empty; notification skipped. Configure SLACK_WEBHOOK_URL or DEPLOYMENTS_SLACK_WEBHOOK_URL."
     return 0
   fi
 
   curl -sf -X POST "$SLACK_WEBHOOK_URL" \
     -H "Content-Type: application/json" \
-    -d "{\"text\": $(echo "$message" | jq -Rs .)}" >/dev/null || true
+    -d "{\"text\": $(echo "$message" | jq -Rs .)}" >/dev/null \
+    || echo "::warning::Slack notification failed"
+}
+
+apply_verification_env() {
+  local config="$1" key value
+
+  # Mission configs may define repo-specific verification env, e.g.
+  # {"verification":{"env":{"API_BASE_URL":"https://api.example.test/api"}}}
+  while IFS='=' read -r key value; do
+    [ -n "$key" ] || continue
+
+    if [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] && [ -z "${!key:-}" ]; then
+      export "$key=$value"
+    fi
+  done < <(jq -r '.verification.env // {} | to_entries[] | "\(.key)=\(.value | tostring)"' "$config" 2>/dev/null || true)
+
+  # Safe defaults for Mango Next.js apps. These match CI placeholders and keep
+  # build/typecheck hooks deterministic when the caller workflow has no env.
+  export API_BASE_URL="${API_BASE_URL:-https://api.example.test/api}"
+  export JWT_SECRET="${JWT_SECRET:-ci-test-secret-value-for-github-actions-32}"
+  export AUTH_COOKIE_NAME="${AUTH_COOKIE_NAME:-auth-session}"
+}
+
+ensure_verify_dependencies() {
+  local install_cmd install_output install_exit
+
+  if [ "$VERIFY_DEPS_READY" = true ]; then
+    return 0
+  fi
+
+  if [ ! -f package.json ]; then
+    VERIFY_DEPS_READY=true
+    return 0
+  fi
+
+  if [ -f package-lock.json ]; then
+    install_cmd="npm ci --prefer-offline --no-audit"
+  else
+    install_cmd="npm install --no-audit"
+  fi
+
+  echo "Installing dependencies for verification: $install_cmd"
+  set +e
+  install_output=$(eval "$install_cmd" 2>&1)
+  install_exit=$?
+  set -e
+
+  if [ "$install_exit" -ne 0 ]; then
+    printf '### ❌ `install` failed (exit %s)\n```\n%s\n```\n' \
+      "$install_exit" "$(echo "$install_output" | tail -50)" \
+      > /tmp/wave-verify-errors.md
+    return 1
+  fi
+
+  echo "$install_output" | tail -20
+  VERIFY_DEPS_READY=true
+  return 0
 }
 
 wave_consolidated_branch() {
@@ -106,6 +165,11 @@ run_verify_hooks() {
 
   if [ "${#VERIFY_HOOKS[@]}" -eq 0 ]; then
     return 0
+  fi
+
+  apply_verification_env "$config"
+  if ! ensure_verify_dependencies; then
+    return 1
   fi
 
   for hook_name in "${VERIFY_HOOKS[@]}"; do
@@ -479,13 +543,10 @@ for CONFIG in $(mission_list_active_configs "$MISSIONS_DIR"); do
     # Run verify hooks on the consolidated branch BEFORE creating/updating
     # the PR. This catches broken tests, lint errors, and type errors early
     # — before CI runs on the PR and before a human has to intervene.
-    VERIFY_FAILED=false
     if [ "$(wave_get_gate_type "$CONFIG" "$WAVE")" = "verify-then-auto" ]; then
       echo "Running pre-PR verification hooks on consolidated branch..."
-      npm ci --prefer-offline --no-audit 2>/dev/null || npm install 2>/dev/null || true
 
       if ! run_verify_hooks "$CONFIG" "$WAVE"; then
-        VERIFY_FAILED=true
         VERIFY_ERRORS=$(cat /tmp/wave-verify-errors.md 2>/dev/null || echo "Unknown verification failure")
         RUN_URL="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
 

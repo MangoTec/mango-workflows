@@ -48,7 +48,7 @@ jobs:
           GH_PAT_PORTAL: ${{ secrets.GH_PAT_PORTAL }}
           MODE: ${{ inputs.mode }}
           ISSUE_NUMBER: ${{ inputs.issue-number }}
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL || secrets.DEPLOYMENTS_SLACK_WEBHOOK_URL || secrets.SLACK_WEBHOOK }}
         run: |
           set -euo pipefail
 
