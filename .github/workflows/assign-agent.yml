@@ -260,9 +260,22 @@ jobs:
           ISSUE_NUMBER: ${{ inputs.issue-number }}
           AGENT_USER: ${{ steps.config.outputs.copilot_user }}
         run: |
+          set -euo pipefail
+
           TOKEN="${GH_PAT_PORTAL:-$GH_TOKEN}"
-          GH_TOKEN="$TOKEN" gh issue edit "$ISSUE_NUMBER" --add-assignee "$AGENT_USER" \
-            || echo "::warning::Failed to assign $AGENT_USER"
+          ASSIGNEE="$AGENT_USER"
+
+          # GitHub Copilot Coding Agent is not a normal assignable user.
+          # The GitHub CLI exposes it through the special assignee value
+          # `@copilot`; using "Copilot" or "copilot-swe-agent" fails with
+          # "Bot does not have access to the repository" / "not found".
+          case "${ASSIGNEE,,}" in
+            copilot|github-copilot|copilot-swe-agent)
+              ASSIGNEE="@copilot"
+              ;;
+          esac
+
+          GH_TOKEN="$TOKEN" gh issue edit "$ISSUE_NUMBER" --add-assignee "$ASSIGNEE"
 
       # ─── Provider: Codex ───
       - name: Trigger Codex
