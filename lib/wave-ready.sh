@@ -579,9 +579,10 @@ for CONFIG in $(mission_list_active_configs "$MISSIONS_DIR"); do
     WAVE_READY=true
 
     for ISSUE_NUMBER in "${ISSUE_NUMBERS[@]}"; do
-      # Accept PRs targeting either the mission branch OR the base branch (main).
-      # Copilot coding agent always creates PRs against the default branch (main),
-      # so we accept those as source material for the consolidated wave PR.
+      # Accept PRs targeting either the mission branch OR the base branch.
+      # New Copilot assignments pass agent_assignment.base_branch so child PRs
+      # should target the mission branch; base-branch PRs are kept as a legacy
+      # fallback for already-running agents and older workflows.
       PR_JSON=$(jq -c --argjson issue "$ISSUE_NUMBER" --arg base "$MISSION_BRANCH" --arg default_base "$BASE_BRANCH" --arg consolidated "$CONSOLIDATED_BRANCH" '
           [ .[]
             | select(.baseRefName == $base or .baseRefName == $default_base)
@@ -642,8 +643,9 @@ for CONFIG in $(mission_list_active_configs "$MISSIONS_DIR"); do
       git fetch origin "$REF_NAME"
 
       if ! git merge --no-ff --no-edit FETCH_HEAD; then
-        # Copilot PRs target main, not the mission branch, so add/add conflicts
-        # are expected when wave N evolves files created in wave N-1.
+        # Child PRs can still conflict when multiple tasks evolve shared files
+        # in the same wave or when older Copilot assignments targeted the base
+        # branch instead of the mission branch.
         # Retry with -X theirs to accept the PR's (newer) version.
         echo "Merge conflict detected — retrying with -X theirs (accept PR version)"
         git merge --abort || true

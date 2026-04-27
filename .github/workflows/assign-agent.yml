@@ -258,24 +258,52 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_PAT_PORTAL: ${{ secrets.GH_PAT_PORTAL }}
           ISSUE_NUMBER: ${{ inputs.issue-number }}
-          AGENT_USER: ${{ steps.config.outputs.copilot_user }}
+          MISSION_ID: ${{ steps.config.outputs.mission_id }}
+          MISSION_BRANCH: ${{ steps.config.outputs.mission_branch }}
+          REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
 
           TOKEN="${GH_PAT_PORTAL:-$GH_TOKEN}"
-          ASSIGNEE="$AGENT_USER"
+          ENCODED_MISSION_BRANCH=$(jq -rn --arg branch "$MISSION_BRANCH" '$branch | @uri')
 
-          # GitHub Copilot Coding Agent is not a normal assignable user.
-          # The GitHub CLI exposes it through the special assignee value
-          # `@copilot`; using "Copilot" or "copilot-swe-agent" fails with
-          # "Bot does not have access to the repository" / "not found".
-          case "${ASSIGNEE,,}" in
-            copilot|github-copilot|copilot-swe-agent)
-              ASSIGNEE="@copilot"
-              ;;
-          esac
+          GH_TOKEN="$TOKEN" gh api \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "/repos/${REPOSITORY}/branches/${ENCODED_MISSION_BRANCH}" >/dev/null
 
-          GH_TOKEN="$TOKEN" gh issue edit "$ISSUE_NUMBER" --add-assignee "$ASSIGNEE"
+          CUSTOM_INSTRUCTIONS=$(cat <<INSTRUCTIONS
+          Work from the mission branch \`${MISSION_BRANCH}\` for mission \`${MISSION_ID}\`.
+          Your pull request must target \`${MISSION_BRANCH}\`, not \`main\`.
+          Include \`Closes #${ISSUE_NUMBER}\` in the PR body.
+          INSTRUCTIONS
+          )
+
+          PAYLOAD=$(jq -n \
+            --arg repo "$REPOSITORY" \
+            --arg branch "$MISSION_BRANCH" \
+            --arg instructions "$CUSTOM_INSTRUCTIONS" \
+            '{
+              assignees: ["copilot-swe-agent[bot]"],
+              agent_assignment: {
+                target_repo: $repo,
+                base_branch: $branch,
+                custom_instructions: $instructions,
+                custom_agent: "",
+                model: ""
+              }
+            }')
+
+          # Use the Copilot Agent Assignment API instead of `gh issue edit
+          # --add-assignee @copilot`. Plain issue assignment cannot pass a
+          # base branch, so Copilot defaults to the repository default branch
+          # and creates child PRs against `main`.
+          GH_TOKEN="$TOKEN" gh api \
+            --method POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "/repos/${REPOSITORY}/issues/${ISSUE_NUMBER}/assignees" \
+            --input - <<< "$PAYLOAD"
 
       # ─── Provider: Codex ───
       - name: Trigger Codex
