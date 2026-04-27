@@ -344,7 +344,7 @@ finalize_merged_wave_pr() {
     return 1
   fi
 
-  for config in $(mission_list_active_configs "$MISSIONS_DIR"); do
+  for config in $(mission_list_effective_active_configs "$MISSIONS_DIR"); do
     mission_id=$(mission_get_id "$config")
     base_branch=$(mission_get_base_branch_from_config "$config")
     mission_branch=$(mission_get_branch_from_config "$config")
@@ -528,8 +528,10 @@ git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 OPEN_PRS_JSON=$(gh_auth pr list --state open --limit 200 \
   --json number,title,author,headRefName,headRefOid,baseRefName,isDraft,url,mergeStateStatus,closingIssuesReferences)
 
-# Iterate over all active mission configs
-for CONFIG in $(mission_list_active_configs "$MISSIONS_DIR"); do
+# Iterate over all effective active mission configs. This includes mission
+# configs from origin/mission/* so schedule/workflow_run events do not miss
+# waves that have not been merged back to the default branch yet.
+for CONFIG in $(mission_list_effective_active_configs "$MISSIONS_DIR"); do
   MISSION_ID=$(mission_get_id "$CONFIG")
   BASE_BRANCH=$(mission_get_base_branch_from_config "$CONFIG")
   MISSION_BRANCH=$(mission_get_branch_from_config "$CONFIG")

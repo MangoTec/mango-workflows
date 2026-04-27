@@ -24,6 +24,45 @@ setup() {
   assert_output ""
 }
 
+@test "mission_list_effective_active_configs prefers mission branch config over stale default branch" {
+  local tmpdir origin work config_path
+  tmpdir=$(mktemp -d)
+  origin="$tmpdir/origin.git"
+  work="$tmpdir/work"
+
+  git init --bare "$origin" >/dev/null
+  git init -b main "$work" >/dev/null
+  git -C "$work" config user.email "test@example.com"
+  git -C "$work" config user.name "Test User"
+  git -C "$work" remote add origin "$origin"
+
+  mkdir -p "$work/.github/missions"
+  cat > "$work/.github/missions/estado-de-cuenta.json" <<'JSON'
+{"version":"5.0.0","mission":{"id":"estado-de-cuenta","baseBranch":"main","missionBranch":"mission/estado-de-cuenta","status":"active"},"waves":{"0":{"issues":[55],"gate":"human"}}}
+JSON
+  git -C "$work" add .github/missions/estado-de-cuenta.json
+  git -C "$work" commit -m "main stale config" >/dev/null
+  git -C "$work" push -u origin main >/dev/null 2>&1
+
+  git -C "$work" checkout -b mission/estado-de-cuenta >/dev/null 2>&1
+  cat > "$work/.github/missions/estado-de-cuenta.json" <<'JSON'
+{"version":"5.0.0","mission":{"id":"estado-de-cuenta","baseBranch":"main","missionBranch":"mission/estado-de-cuenta","status":"active"},"waves":{"0":{"issues":[55],"gate":"human"},"4":{"issues":[77,81],"gate":"verify-then-auto"}}}
+JSON
+  git -C "$work" commit -am "mission branch config" >/dev/null
+  git -C "$work" push -u origin mission/estado-de-cuenta >/dev/null 2>&1
+
+  git -C "$work" checkout main >/dev/null 2>&1
+  cd "$work"
+
+  MISSION_EFFECTIVE_CONFIG_DIR="$tmpdir/effective" run mission_list_effective_active_configs ".github/missions"
+  assert_success
+  [ "${#lines[@]}" -eq 1 ]
+  config_path="${lines[0]}"
+  jq -e '.waves."4".issues | index(81)' "$config_path" >/dev/null
+
+  rm -rf "$tmpdir"
+}
+
 # ─── mission_list_all ───
 
 @test "mission_list_all returns all missions including paused" {

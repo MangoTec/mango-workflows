@@ -53,6 +53,114 @@ mission_list_active_configs() {
   fi
 }
 
+# Convert an arbitrary string into a filesystem-safe key.
+# Usage: mission_safe_key VALUE
+mission_safe_key() {
+  printf '%s' "$1" | tr '/:[:space:]' '____' | tr -cd 'A-Za-z0-9_.-'
+}
+
+# Internal helper for mission_list_effective_active_configs.
+mission_seen_effective_config() {
+  local tmp_dir="$1" mission_id="$2"
+  local key
+  key=$(mission_safe_key "$mission_id")
+  [ -e "$tmp_dir/seen/$key" ]
+}
+
+# Internal helper for mission_list_effective_active_configs.
+mission_mark_effective_config_seen() {
+  local tmp_dir="$1" mission_id="$2"
+  local key
+  key=$(mission_safe_key "$mission_id")
+  mkdir -p "$tmp_dir/seen"
+  : > "$tmp_dir/seen/$key"
+}
+
+# Internal helper for mission_list_effective_active_configs.
+mission_add_effective_config_candidate() {
+  local tmp_dir="$1" config="$2"
+  local mission_id status key out
+
+  mission_id=$(jq -r '.mission.id // "default"' "$config" 2>/dev/null || echo "")
+  [ -n "$mission_id" ] || return 0
+
+  if mission_seen_effective_config "$tmp_dir" "$mission_id"; then
+    return 0
+  fi
+
+  # Mark the mission as seen even when inactive. This prevents a stale active
+  # config from the default branch from overriding an inactive mission-branch
+  # config that intentionally paused the mission.
+  mission_mark_effective_config_seen "$tmp_dir" "$mission_id"
+
+  status=$(jq -r '.mission.status // "active"' "$config" 2>/dev/null || echo "inactive")
+  [ "$status" = "active" ] || return 0
+
+  key=$(mission_safe_key "$mission_id")
+  out="$tmp_dir/configs/$key.json"
+  mkdir -p "$tmp_dir/configs"
+  cp "$config" "$out"
+  echo "$out" >> "$tmp_dir/index"
+}
+
+# List effective active mission configs for automation runs.
+#
+# GitHub schedule/workflow_run events execute from the default branch. For
+# long-lived mission branches, the default branch can legitimately lag behind
+# the mission config, so automation must also inspect origin/mission/* refs.
+#
+# Precedence:
+#   1. Active configs whose mission.missionBranch matches origin/mission/*
+#   2. Active configs in the current checkout that were not already found
+#
+# Output paths are stable temp copies, so callers can safely git checkout other
+# branches while continuing to read the selected config.
+# Usage: mission_list_effective_active_configs MISSIONS_DIR
+mission_list_effective_active_configs() {
+  local dir="$1"
+  local tmp_dir ref branch path candidate config_branch config
+
+  tmp_dir="${MISSION_EFFECTIVE_CONFIG_DIR:-${RUNNER_TEMP:-/tmp}/mango-effective-missions-${GITHUB_RUN_ID:-$$}}"
+  rm -rf "$tmp_dir"
+  mkdir -p "$tmp_dir/configs" "$tmp_dir/seen"
+  : > "$tmp_dir/index"
+
+  if git rev-parse --git-dir >/dev/null 2>&1; then
+    git fetch origin '+refs/heads/*:refs/remotes/origin/*' --depth=1 --prune >/dev/null 2>&1 || true
+
+    while IFS= read -r ref; do
+      [ -n "$ref" ] || continue
+      branch="${ref#origin/}"
+
+      while IFS= read -r path; do
+        [ -n "$path" ] || continue
+        case "$path" in
+          "$dir"/*.json) ;;
+          *) continue ;;
+        esac
+
+        candidate=$(mktemp "$tmp_dir/candidate.XXXXXX")
+        if ! git show "$ref:$path" > "$candidate" 2>/dev/null; then
+          rm -f "$candidate"
+          continue
+        fi
+
+        config_branch=$(mission_get_branch_from_config "$candidate" 2>/dev/null || echo "")
+        if [ "$config_branch" = "$branch" ]; then
+          mission_add_effective_config_candidate "$tmp_dir" "$candidate" "$ref:$path"
+        fi
+        rm -f "$candidate"
+      done < <(git ls-tree -r --name-only "$ref" -- "$dir" 2>/dev/null || true)
+    done < <(git for-each-ref --format='%(refname:short)' refs/remotes/origin 2>/dev/null | grep '^origin/mission/' | sort || true)
+  fi
+
+  for config in $(mission_list_all_configs "$dir"); do
+    mission_add_effective_config_candidate "$tmp_dir" "$config" "$config"
+  done
+
+  cat "$tmp_dir/index"
+}
+
 # List all mission config paths regardless of status.
 # Usage: mission_list_all_configs MISSIONS_DIR
 mission_list_all_configs() {
