@@ -5,10 +5,11 @@
 #           GITHUB_REPOSITORY, GITHUB_RUN_ID, GITHUB_EVENT_PATH env vars.
 
 set -euo pipefail
-# shellcheck disable=SC2016
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck disable=SC1091
 source "${SCRIPT_DIR}/mission.sh"
+# shellcheck disable=SC1091
 source "${SCRIPT_DIR}/waves.sh"
 
 MISSIONS_DIR=".github/missions"
@@ -141,6 +142,7 @@ ensure_verify_dependencies() {
   set -e
 
   if [ "$install_exit" -ne 0 ]; then
+    # shellcheck disable=SC2016
     printf '### ❌ `install` failed (exit %s)\n```\n%s\n```\n' \
       "$install_exit" "$(echo "$install_output" | tail -50)" \
       > /tmp/wave-verify-errors.md
@@ -271,6 +273,7 @@ create_final_pr_if_needed() {
   done
 
   pr_title="feat(${mission_id}): complete mission"
+  # shellcheck disable=SC2016
   pr_body=$(printf '## Mission `%s` — Final PR\n\nAll waves complete. This PR merges the full mission branch into `%s`.\n\n### Issues included\n%s\n### Review\nReview the combined changes, approve, and merge.' "$mission_id" "$base_branch" "$all_issues")
 
   final_pr=$(gh_pat pr create \

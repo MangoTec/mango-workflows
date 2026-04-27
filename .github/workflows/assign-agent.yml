@@ -35,6 +35,14 @@ jobs:
           path: .mango-workflows
           sparse-checkout: lib
 
+      - name: Fetch mission branches
+        run: |
+          # Issue events run from the default branch, but active mission configs
+          # often evolve on mission branches before the final mission PR lands.
+          # Fetch remote branch heads so the resolver below can move the
+          # workspace to the branch that actually owns the ready issue.
+          git fetch origin '+refs/heads/*:refs/remotes/origin/*' --depth=1 --prune
+
       - name: Resolve mission config
         id: config
         env:
@@ -45,15 +53,50 @@ jobs:
 
           MISSIONS_DIR=".github/missions"
 
-          RESOLVED=$(cfg_resolve_for_issue "$MISSIONS_DIR" "$ISSUE_NUMBER") || {
+          resolve_current_checkout() {
+            cfg_resolve_for_issue "$MISSIONS_DIR" "$ISSUE_NUMBER" 2>/dev/null || true
+          }
+
+          RESOLVED=$(resolve_current_checkout)
+          CONFIG_REF=$(git rev-parse --short HEAD)
+
+          if [ -z "$RESOLVED" ]; then
+            CURRENT_HEAD=$(git rev-parse HEAD)
+            echo "Issue #$ISSUE_NUMBER not found on initial checkout; scanning remote branches for active mission configs..."
+
+            while IFS= read -r ref; do
+              [ -n "$ref" ] || continue
+              echo "Checking $ref"
+              git checkout --force --quiet "$ref"
+
+              RESOLVED=$(resolve_current_checkout)
+              if [ -n "$RESOLVED" ]; then
+                CONFIG_REF="$ref"
+                break
+              fi
+            done < <(
+              {
+                git for-each-ref --format='%(refname:short)' refs/remotes/origin | grep '^origin/mission/' || true
+                git for-each-ref --format='%(refname:short)' refs/remotes/origin | grep -vE '^origin/(HEAD|mission/)' || true
+              } | awk '!seen[$0]++'
+            )
+
+            if [ -z "$RESOLVED" ]; then
+              git checkout --force --quiet "$CURRENT_HEAD"
+            fi
+          fi
+
+          if [ -z "$RESOLVED" ]; then
             echo "::error::Issue #$ISSUE_NUMBER not found in any active mission under $MISSIONS_DIR"
             exit 1
-          }
+          fi
+
           CONFIG_PATH=$(echo "$RESOLVED" | head -1)
           MISSION_ID=$(echo "$RESOLVED" | tail -1)
 
           echo "config_path=$CONFIG_PATH" >> "$GITHUB_OUTPUT"
           echo "mission_id=$MISSION_ID" >> "$GITHUB_OUTPUT"
+          echo "config_ref=$CONFIG_REF" >> "$GITHUB_OUTPUT"
 
           # Mission metadata
           echo "mission_branch=$(mission_get_branch "$MISSIONS_DIR" "$MISSION_ID")" >> "$GITHUB_OUTPUT"
@@ -85,7 +128,7 @@ jobs:
           echo "auto_assign=$(jq -r '.autonomy.autoAssignAgent // true' "$CONFIG_PATH")" >> "$GITHUB_OUTPUT"
           echo "autonomy=$(jq -r '.autonomy.level // "human-gate-pr"' "$CONFIG_PATH")" >> "$GITHUB_OUTPUT"
 
-          echo "Resolved: mission=$MISSION_ID, config=$CONFIG_PATH, branch=$(mission_get_branch "$MISSIONS_DIR" "$MISSION_ID")"
+          echo "Resolved: mission=$MISSION_ID, config=$CONFIG_PATH, branch=$(mission_get_branch "$MISSIONS_DIR" "$MISSION_ID"), ref=$CONFIG_REF"
 
       - name: Determine provider
         id: provider
