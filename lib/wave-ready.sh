@@ -42,6 +42,65 @@ notify_slack() {
     || echo "::warning::Slack notification failed"
 }
 
+truthy() {
+  case "${1,,}" in
+    true|1|yes|y|on) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+is_copilot_pr_author() {
+  case "$1" in
+    app/copilot-swe-agent|Copilot|copilot-swe-agent|github-copilot)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+copilot_agent_succeeded_for_ref() {
+  local ref_name="$1" head_sha="$2"
+  local matches
+
+  matches=$(gh_auth run list \
+    --workflow "Copilot cloud agent" \
+    --branch "$ref_name" \
+    --limit 10 \
+    --json status,conclusion,headSha \
+    --jq --arg sha "$head_sha" '[.[] | select(.headSha == $sha and .status == "completed" and .conclusion == "success")] | length' \
+    2>/dev/null || echo "0")
+
+  [ "${matches:-0}" -gt 0 ]
+}
+
+accept_copilot_draft_pr_after_success() {
+  local config="$1" pr_json="$2"
+  local accept author ref_name head_sha pr_number
+
+  accept=$(jq -r '.agent.providers.copilot.acceptDraftPrsAfterAgentSuccess // true' "$config")
+  truthy "$accept" || return 1
+
+  author=$(jq -r '.author.login // empty' <<< "$pr_json")
+  is_copilot_pr_author "$author" || return 1
+
+  ref_name=$(jq -r '.headRefName' <<< "$pr_json")
+  head_sha=$(jq -r '.headRefOid // empty' <<< "$pr_json")
+  pr_number=$(jq -r '.number' <<< "$pr_json")
+
+  if [ -z "$head_sha" ] || [ "$head_sha" = "null" ]; then
+    return 1
+  fi
+
+  if copilot_agent_succeeded_for_ref "$ref_name" "$head_sha"; then
+    echo "Accepting draft Copilot PR #$pr_number ($ref_name) because Copilot cloud agent completed successfully for $head_sha"
+    return 0
+  fi
+
+  return 1
+}
+
 apply_verification_env() {
   local config="$1" key value
 
@@ -400,7 +459,7 @@ git config user.name "github-actions[bot]"
 git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
 OPEN_PRS_JSON=$(gh_auth pr list --state open --limit 200 \
-  --json number,title,headRefName,baseRefName,isDraft,url,mergeStateStatus,closingIssuesReferences)
+  --json number,title,author,headRefName,headRefOid,baseRefName,isDraft,url,mergeStateStatus,closingIssuesReferences)
 
 # Iterate over all active mission configs
 for CONFIG in $(mission_list_active_configs "$MISSIONS_DIR"); do
@@ -477,12 +536,16 @@ for CONFIG in $(mission_list_active_configs "$MISSIONS_DIR"); do
       fi
 
       # Individual PRs are never merged directly — they are source material for
-      # the consolidated wave PR. Only check that the PR is not a draft.
+      # the consolidated wave PR. Human drafts are not ready; Copilot drafts
+      # are accepted once the Copilot cloud agent run succeeded for the exact
+      # PR head SHA because Copilot leaves implementation PRs in draft.
       IS_DRAFT=$(jq -r '.isDraft' <<< "$PR_JSON")
       if [ "$IS_DRAFT" = "true" ]; then
-        echo "Wave $WAVE not ready: PR for issue #$ISSUE_NUMBER is still a draft"
-        WAVE_READY=false
-        break
+        if ! accept_copilot_draft_pr_after_success "$CONFIG" "$PR_JSON"; then
+          echo "Wave $WAVE not ready: PR for issue #$ISSUE_NUMBER is still a draft"
+          WAVE_READY=false
+          break
+        fi
       fi
 
       CHILD_ISSUES+=("$ISSUE_NUMBER")
