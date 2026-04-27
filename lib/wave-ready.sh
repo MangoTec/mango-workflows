@@ -61,15 +61,15 @@ is_copilot_pr_author() {
 }
 
 copilot_agent_succeeded_for_ref() {
-  local ref_name="$1" head_sha="$2"
+  local ref_name="$1"
   local matches
 
   matches=$(gh_auth run list \
     --workflow "Copilot cloud agent" \
     --branch "$ref_name" \
     --limit 10 \
-    --json status,conclusion,headSha \
-    --jq --arg sha "$head_sha" '[.[] | select(.headSha == $sha and .status == "completed" and .conclusion == "success")] | length' \
+    --json status,conclusion \
+    --jq '[.[] | select(.status == "completed" and .conclusion == "success")] | length' \
     2>/dev/null || echo "0")
 
   [ "${matches:-0}" -gt 0 ]
@@ -77,7 +77,7 @@ copilot_agent_succeeded_for_ref() {
 
 accept_copilot_draft_pr_after_success() {
   local config="$1" pr_json="$2"
-  local accept author ref_name head_sha pr_number
+  local accept author ref_name pr_number
 
   accept=$(jq -r '.agent.providers.copilot.acceptDraftPrsAfterAgentSuccess // true' "$config")
   truthy "$accept" || return 1
@@ -86,15 +86,10 @@ accept_copilot_draft_pr_after_success() {
   is_copilot_pr_author "$author" || return 1
 
   ref_name=$(jq -r '.headRefName' <<< "$pr_json")
-  head_sha=$(jq -r '.headRefOid // empty' <<< "$pr_json")
   pr_number=$(jq -r '.number' <<< "$pr_json")
 
-  if [ -z "$head_sha" ] || [ "$head_sha" = "null" ]; then
-    return 1
-  fi
-
-  if copilot_agent_succeeded_for_ref "$ref_name" "$head_sha"; then
-    echo "Accepting draft Copilot PR #$pr_number ($ref_name) because Copilot cloud agent completed successfully for $head_sha"
+  if copilot_agent_succeeded_for_ref "$ref_name"; then
+    echo "Accepting draft Copilot PR #$pr_number ($ref_name) because Copilot cloud agent completed successfully for the branch"
     return 0
   fi
 
