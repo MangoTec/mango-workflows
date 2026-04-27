@@ -47,5 +47,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_PAT_PORTAL: ${{ secrets.GH_PAT_PORTAL }}
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL || secrets.DEPLOYMENTS_SLACK_WEBHOOK_URL || secrets.SLACK_WEBHOOK }}
+          SLACK_WEBHOOK_URL: ${{ secrets.MANGO_TL_REMINDERS_SLACK_WEBHOOK_URL || secrets.SLACK_WEBHOOK_URL || secrets.SLACK_WEBHOOK }}
         run: bash .mango-workflows/lib/wave-ready.sh

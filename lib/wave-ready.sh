@@ -32,7 +32,7 @@ notify_slack() {
   local message="$1"
 
   if [ -z "${SLACK_WEBHOOK_URL:-}" ]; then
-    echo "::warning::Slack webhook is empty; notification skipped. Configure SLACK_WEBHOOK_URL or DEPLOYMENTS_SLACK_WEBHOOK_URL."
+    echo "::warning::Slack webhook is empty; notification skipped. Configure MANGO_TL_REMINDERS_SLACK_WEBHOOK_URL or SLACK_WEBHOOK_URL."
     return 0
   fi
 
