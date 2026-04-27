@@ -117,7 +117,11 @@ unlock_next_wave() {
   mapfile -t NEXT_ISSUES < <(wave_get_issues "$config" "$next_wave")
 
   for issue_num in "${NEXT_ISSUES[@]}"; do
-    gh_auth issue edit "$issue_num" \
+    # Use the PAT-backed client here instead of GITHUB_TOKEN. Label events
+    # created by GITHUB_TOKEN/GitHub Actions do not trigger downstream
+    # workflows, so `status:ready` would be applied but Assign Agent would
+    # never start the next wave.
+    gh_pat issue edit "$issue_num" \
       --remove-label "status:blocked" \
       --add-label "status:ready" 2>/dev/null || true
   done
