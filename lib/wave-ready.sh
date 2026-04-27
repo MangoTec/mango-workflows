@@ -165,6 +165,75 @@ wave_consolidated_branch() {
   fi
 }
 
+write_wave_pr_body() {
+  local config="$1" body_file="$2" wave="$3" next_wave="$4" verification_status="$5" verification_errors="${6:-}"
+
+  {
+    echo "## Wave $wave Consolidation"
+    echo
+    echo "This PR consolidates the completed task PRs for wave $wave into a single review point."
+    echo
+
+    if [ "$verification_status" = "failed" ]; then
+      echo "### Verification"
+      echo "❌ Pre-PR verification failed on the consolidated branch."
+      echo
+      echo "The PR was still created so review and CI failures stay visible in one consolidated place instead of being hidden in the wave gate issue."
+      echo
+      echo "<details>"
+      echo "<summary>Failure summary</summary>"
+      echo
+      printf '%s\n' "$verification_errors"
+      echo
+      echo "</details>"
+      echo
+    elif [ "$verification_status" = "passed" ]; then
+      echo "### Verification"
+      echo "✅ Pre-PR verification passed on the consolidated branch."
+      echo
+    fi
+
+    echo "### Included task PRs"
+    for index in "${!CHILD_REFS[@]}"; do
+      echo "- Includes #${CHILD_ISSUES[$index]}: ${CHILD_TITLES[$index]} ([#${CHILD_PRS[$index]}](${CHILD_URLS[$index]}))"
+    done
+    echo
+    echo "### Automation"
+    echo "- Merging this PR closes the wave issues from automation, even when the PR targets a non-default mission branch."
+
+    if jq -e ".waves[\"$next_wave\"]" "$config" >/dev/null 2>&1; then
+      echo "- After merge, automation applies the wave gate and starts wave $next_wave when allowed."
+    else
+      echo "- After merge, automation completes the final wave and creates the final mission PR when needed."
+    fi
+  } > "$body_file"
+}
+
+sync_wave_pr() {
+  local base_branch="$1" head_branch="$2" title="$3" body_file="$4"
+
+  OPEN_WAVE_PR_NUMBER=$(gh_auth pr list --head "$head_branch" --base "$base_branch" --state open --json number --jq '.[0].number // empty')
+  PR_CREATED=false
+  PR_PUSHED=false
+
+  if [ "${REMOTE_BRANCH_EXISTS:-false}" = true ] && git diff --quiet "origin/$head_branch...HEAD"; then
+    echo "No content changes detected for $head_branch"
+  else
+    git push origin "$head_branch" --force-with-lease
+    PR_PUSHED=true
+  fi
+
+  if [ -n "$OPEN_WAVE_PR_NUMBER" ]; then
+    gh_pat pr edit "$OPEN_WAVE_PR_NUMBER" --title "$title" --body-file "$body_file"
+  else
+    gh_pat pr create --base "$base_branch" --head "$head_branch" --title "$title" --body-file "$body_file"
+    PR_CREATED=true
+  fi
+
+  WAVE_PR_NUMBER=$(gh_auth pr list --head "$head_branch" --base "$base_branch" --state open --json number,url --jq '.[0].number // empty')
+  WAVE_PR_URL=$(gh_auth pr list --head "$head_branch" --base "$base_branch" --state open --json number,url --jq '.[0].url // empty')
+}
+
 unlock_next_wave() {
   local config="$1" next_wave="$2"
   local issue_num
@@ -601,85 +670,61 @@ for CONFIG in $(mission_list_active_configs "$MISSIONS_DIR"); do
       fi
     done
 
+    VERIFY_STATUS="skipped"
+    VERIFY_ERRORS=""
+
     # ── Pre-PR verification gate ──────────────────────────────────
-    # Run verify hooks on the consolidated branch BEFORE creating/updating
-    # the PR. This catches broken tests, lint errors, and type errors early
-    # — before CI runs on the PR and before a human has to intervene.
+    # Run verify hooks on the consolidated branch before creating/updating
+    # the PR. Verification failures no longer block PR creation: the PR is
+    # still synced so the human review point and CI failures stay visible in
+    # one place.
     if [ "$(wave_get_gate_type "$CONFIG" "$WAVE")" = "verify-then-auto" ]; then
       echo "Running pre-PR verification hooks on consolidated branch..."
 
       if ! run_verify_hooks "$CONFIG" "$WAVE"; then
         VERIFY_ERRORS=$(cat /tmp/wave-verify-errors.md 2>/dev/null || echo "Unknown verification failure")
-        RUN_URL="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-
-        # Notify on gate issue
-        if [ -n "$GATE_ISSUE" ] && [ "$GATE_ISSUE" != "null" ]; then
-          gh_auth issue comment "$GATE_ISSUE" --body "$(printf '🔴 **Pre-PR verification failed for wave %s.**\n\nThe consolidated branch did not pass verification hooks. PR was NOT created.\n\n%s\n\nRun: %s' "$WAVE" "$VERIFY_ERRORS" "$RUN_URL")"
-        fi
-
-        # Notify Slack
-        notify_slack "$(printf '%s\n' \
-          "🔴 *Verificación pre-PR falló en wave ${WAVE}*" \
-          "• Repo: \`${REPO_NAME}\`" \
-          "• Misión: \`${MISSION_ID}\`" \
-          "• La PR consolidada NO se creó" \
-          "• Run: <${RUN_URL}|ver ejecución>" \
-          "• Acción: corregir errores en las PRs hijas y relanzar")"
-
-        # Re-label task issues as needing fixes
-        for issue_num in "${CHILD_ISSUES[@]}"; do
-          gh_auth issue edit "$issue_num" --add-label "status:failed" 2>/dev/null || true
-          gh_auth issue comment "$issue_num" --body "$(printf '🔴 Pre-PR verification failed. Fix required before consolidation.\n\n%s' "$VERIFY_ERRORS")" 2>/dev/null || true
-        done
-
-        echo "::error::Pre-PR verification failed for wave $WAVE. PR not created."
-        continue
+        VERIFY_STATUS="failed"
+      else
+        VERIFY_STATUS="passed"
+        echo "✅ Pre-PR verification passed for wave $WAVE"
       fi
-
-      echo "✅ Pre-PR verification passed for wave $WAVE"
     fi
 
     BODY_FILE=$(mktemp)
-    {
-      echo "## Wave $WAVE Consolidation"
-      echo
-      echo "This PR consolidates the completed task PRs for wave $WAVE into a single review point."
-      echo
-      echo "### Included task PRs"
-      for index in "${!CHILD_REFS[@]}"; do
-        echo "- Includes #${CHILD_ISSUES[$index]}: ${CHILD_TITLES[$index]} ([#${CHILD_PRS[$index]}](${CHILD_URLS[$index]}))"
-      done
-      echo
-      echo "### Automation"
-      echo "- Merging this PR closes the wave issues from automation, even when the PR targets a non-default mission branch."
-
-      if jq -e ".waves[\"$NEXT_WAVE\"]" "$CONFIG" >/dev/null 2>&1; then
-        echo "- After merge, automation applies the wave gate and starts wave $NEXT_WAVE when allowed."
-      else
-        echo "- After merge, automation completes the final wave and creates the final mission PR when needed."
-      fi
-    } > "$BODY_FILE"
-
-    OPEN_WAVE_PR_NUMBER=$(gh_auth pr list --head "$CONSOLIDATED_BRANCH" --base "$MISSION_BRANCH" --state open --json number --jq '.[0].number // empty')
-    PR_CREATED=false
-
-    if [ "$REMOTE_BRANCH_EXISTS" = true ] && git diff --quiet "origin/$CONSOLIDATED_BRANCH...HEAD"; then
-      echo "No content changes detected for $CONSOLIDATED_BRANCH"
-    else
-      git push origin "$CONSOLIDATED_BRANCH" --force-with-lease
-    fi
-
     TITLE="feat(${MISSION_ID}/wave-$WAVE): consolidate ${#CHILD_REFS[@]} completed tasks"
+    write_wave_pr_body "$CONFIG" "$BODY_FILE" "$WAVE" "$NEXT_WAVE" "$VERIFY_STATUS" "$VERIFY_ERRORS"
+    sync_wave_pr "$MISSION_BRANCH" "$CONSOLIDATED_BRANCH" "$TITLE" "$BODY_FILE"
 
-    if [ -n "$OPEN_WAVE_PR_NUMBER" ]; then
-      gh_pat pr edit "$OPEN_WAVE_PR_NUMBER" --title "$TITLE" --body-file "$BODY_FILE"
-    else
-      gh_pat pr create --base "$MISSION_BRANCH" --head "$CONSOLIDATED_BRANCH" --title "$TITLE" --body-file "$BODY_FILE"
-      PR_CREATED=true
+    if [ "$VERIFY_STATUS" = "failed" ]; then
+      RUN_URL="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+      if [ "$PR_CREATED" = true ] || [ "${PR_PUSHED:-false}" = true ]; then
+        if [ -n "$GATE_ISSUE" ] && [ "$GATE_ISSUE" != "null" ]; then
+          gh_auth issue comment "$GATE_ISSUE" --body "$(printf '🔴 **Pre-PR verification failed for wave %s.**\n\nThe consolidated PR was still created/updated so the failure is visible in the PR review flow: [#%s](%s).\n\n%s\n\nRun: %s' "$WAVE" "$WAVE_PR_NUMBER" "$WAVE_PR_URL" "$VERIFY_ERRORS" "$RUN_URL")"
+        fi
+
+        gh_auth pr comment "$WAVE_PR_NUMBER" --body "$(printf '🔴 **Pre-PR verification failed for wave %s.**\n\n%s\n\nRun: %s' "$WAVE" "$VERIFY_ERRORS" "$RUN_URL")" 2>/dev/null || true
+
+        notify_slack "$(printf '%s\n' \
+          "🟡 *Wave ${WAVE}: PR consolidada creada con checks fallando*" \
+          "• Repo: \`${REPO_NAME}\`" \
+          "• Misión: \`${MISSION_ID}\`" \
+          "• PR consolidada: <${WAVE_PR_URL}|#${WAVE_PR_NUMBER}>" \
+          "• Run: <${RUN_URL}|ver ejecución>" \
+          "• Acción: revisar/arreglar en la PR consolidada")"
+
+        for issue_num in "${CHILD_ISSUES[@]}"; do
+          gh_auth issue edit "$issue_num" --add-label "status:failed" 2>/dev/null || true
+          gh_auth issue comment "$issue_num" --body "$(printf '🔴 Pre-PR verification failed, but the consolidated PR was created/updated: #%s.\n\n%s' "$WAVE_PR_NUMBER" "$VERIFY_ERRORS")" 2>/dev/null || true
+        done
+      else
+        echo "Consolidated PR already up to date with verification failures; skipping duplicate notifications."
+      fi
+
+      echo "::error::Pre-PR verification failed for wave $WAVE. Consolidated PR: $WAVE_PR_URL"
+      rm -f "$BODY_FILE"
+      continue
     fi
-
-    WAVE_PR_NUMBER=$(gh_auth pr list --head "$CONSOLIDATED_BRANCH" --base "$MISSION_BRANCH" --state open --json number,url --jq '.[0].number // empty')
-    WAVE_PR_URL=$(gh_auth pr list --head "$CONSOLIDATED_BRANCH" --base "$MISSION_BRANCH" --state open --json number,url --jq '.[0].url // empty')
 
     if [ "$PR_CREATED" = true ]; then
       if [ -n "$GATE_ISSUE" ] && [ "$GATE_ISSUE" != "null" ]; then
