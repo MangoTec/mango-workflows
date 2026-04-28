@@ -43,6 +43,19 @@ notify_slack() {
     || echo "::warning::Slack notification failed"
 }
 
+ensure_full_git_history() {
+  if ! git rev-parse --git-dir >/dev/null 2>&1; then
+    return 0
+  fi
+
+  if [ "$(git rev-parse --is-shallow-repository 2>/dev/null || echo false)" = "true" ]; then
+    echo "Repository is shallow; fetching full history for reliable branch consolidation"
+    git fetch origin --unshallow --prune 2>/dev/null \
+      || git fetch origin --depth=2147483647 --prune 2>/dev/null \
+      || true
+  fi
+}
+
 truthy() {
   case "${1,,}" in
     true|1|yes|y|on) return 0 ;;
@@ -511,6 +524,8 @@ EVENT_IS_MERGED_PR=false
 if [ -f "$GITHUB_EVENT_PATH" ]; then
   EVENT_IS_MERGED_PR=$(jq -r '(.pull_request.merged // false) | tostring' "$GITHUB_EVENT_PATH")
 fi
+
+ensure_full_git_history
 
 if [ "$EVENT_IS_MERGED_PR" = "true" ]; then
   if finalize_merged_wave_pr; then

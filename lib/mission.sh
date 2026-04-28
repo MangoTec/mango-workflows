@@ -126,7 +126,11 @@ mission_list_effective_active_configs() {
   : > "$tmp_dir/index"
 
   if git rev-parse --git-dir >/dev/null 2>&1; then
-    git fetch origin '+refs/heads/*:refs/remotes/origin/*' --depth=1 --prune >/dev/null 2>&1 || true
+    # Do not use --depth here. Wave Ready later merges child PR branches into
+    # a consolidated branch, and a shallow ref fetch can make Git treat normal
+    # related branches as "unrelated histories" because their merge-base is
+    # outside the shallow boundary.
+    git fetch origin '+refs/heads/*:refs/remotes/origin/*' --prune >/dev/null 2>&1 || true
 
     while IFS= read -r ref; do
       [ -n "$ref" ] || continue

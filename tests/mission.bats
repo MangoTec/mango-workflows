@@ -59,6 +59,7 @@ JSON
   [ "${#lines[@]}" -eq 1 ]
   config_path="${lines[0]}"
   jq -e '.waves."4".issues | index(81)' "$config_path" >/dev/null
+  [ "$(git -C "$work" rev-parse --is-shallow-repository)" = "false" ]
 
   rm -rf "$tmpdir"
 }

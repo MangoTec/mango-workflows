@@ -41,7 +41,7 @@ jobs:
           # often evolve on mission branches before the final mission PR lands.
           # Fetch remote branch heads so the resolver below can move the
           # workspace to the branch that actually owns the ready issue.
-          git fetch origin '+refs/heads/*:refs/remotes/origin/*' --depth=1 --prune
+          git fetch origin '+refs/heads/*:refs/remotes/origin/*' --prune
 
       - name: Resolve mission config
         id: config
