@@ -17,6 +17,7 @@ TOKEN="${GH_TOKEN}"
 # PAT with PR creation permissions (GITHUB_TOKEN may lack this)
 PAT="${GH_PAT_PORTAL:-$TOKEN}"
 REPO="${GITHUB_REPOSITORY}"
+REPO_OWNER="${REPO%%/*}"
 REPO_NAME=$(basename "$REPO")
 VERIFY_DEPS_READY=false
 
@@ -226,8 +227,15 @@ write_wave_pr_body() {
 
 sync_wave_pr() {
   local base_branch="$1" head_branch="$2" title="$3" body_file="$4"
+  local pr_body open_pr_json created_pr_json
 
-  OPEN_WAVE_PR_NUMBER=$(gh_auth pr list --head "$head_branch" --base "$base_branch" --state open --json number --jq '.[0].number // empty')
+  open_pr_json=$(gh_auth api "repos/${REPO}/pulls" \
+    -X GET \
+    -f state=open \
+    -f base="$base_branch" \
+    -f head="${REPO_OWNER}:${head_branch}")
+  OPEN_WAVE_PR_NUMBER=$(jq -r '.[0].number // empty' <<< "$open_pr_json")
+  WAVE_PR_URL=$(jq -r '.[0].html_url // empty' <<< "$open_pr_json")
   PR_CREATED=false
   PR_PUSHED=false
 
@@ -238,15 +246,29 @@ sync_wave_pr() {
     PR_PUSHED=true
   fi
 
+  pr_body=$(cat "$body_file")
+
   if [ -n "$OPEN_WAVE_PR_NUMBER" ]; then
-    gh_pat pr edit "$OPEN_WAVE_PR_NUMBER" --title "$title" --body-file "$body_file"
+    gh_pat api "repos/${REPO}/pulls/${OPEN_WAVE_PR_NUMBER}" \
+      -X PATCH \
+      -f title="$title" \
+      -f body="$pr_body" >/dev/null
+    WAVE_PR_NUMBER="$OPEN_WAVE_PR_NUMBER"
   else
-    gh_pat pr create --base "$base_branch" --head "$head_branch" --title "$title" --body-file "$body_file"
+    created_pr_json=$(gh_pat api "repos/${REPO}/pulls" \
+      -X POST \
+      -f base="$base_branch" \
+      -f head="$head_branch" \
+      -f title="$title" \
+      -f body="$pr_body")
+    WAVE_PR_NUMBER=$(jq -r '.number // empty' <<< "$created_pr_json")
+    WAVE_PR_URL=$(jq -r '.html_url // empty' <<< "$created_pr_json")
     PR_CREATED=true
   fi
 
-  WAVE_PR_NUMBER=$(gh_auth pr list --head "$head_branch" --base "$base_branch" --state open --json number,url --jq '.[0].number // empty')
-  WAVE_PR_URL=$(gh_auth pr list --head "$head_branch" --base "$base_branch" --state open --json number,url --jq '.[0].url // empty')
+  if [ -z "$WAVE_PR_URL" ] && [ -n "$WAVE_PR_NUMBER" ]; then
+    WAVE_PR_URL=$(gh_auth api "repos/${REPO}/pulls/${WAVE_PR_NUMBER}" --jq '.html_url // empty')
+  fi
 }
 
 unlock_next_wave() {
@@ -267,7 +289,7 @@ unlock_next_wave() {
 
 create_final_pr_if_needed() {
   local config="$1" mission_id="$2"
-  local mission_branch base_branch pr_title pr_body all_issues wave issue_num final_pr
+  local mission_branch base_branch pr_title pr_body all_issues wave issue_num final_pr created_pr_json
 
   mission_branch=$(mission_get_branch_from_config "$config")
   base_branch=$(mission_get_base_branch_from_config "$config")
@@ -289,15 +311,24 @@ create_final_pr_if_needed() {
   # shellcheck disable=SC2016
   pr_body=$(printf '## Mission `%s` — Final PR\n\nAll waves complete. This PR merges the full mission branch into `%s`.\n\n### Issues included\n%s\n### Review\nReview the combined changes, approve, and merge.' "$mission_id" "$base_branch" "$all_issues")
 
-  final_pr=$(gh_pat pr create \
-    --base "$base_branch" \
-    --head "$mission_branch" \
-    --title "$pr_title" \
-    --body "$pr_body" 2>&1) || {
-    echo "::warning::Could not create final PR (may already exist): $final_pr"
-    final_pr=$(gh_auth pr list --base "$base_branch" --head "$mission_branch" --json url --jq '.[0].url // empty')
+  created_pr_json=$(gh_pat api "repos/${REPO}/pulls" \
+    -X POST \
+    -f base="$base_branch" \
+    -f head="$mission_branch" \
+    -f title="$pr_title" \
+    -f body="$pr_body" 2>&1) || {
+    echo "::warning::Could not create final PR (may already exist): $created_pr_json"
+    final_pr=$(gh_auth api "repos/${REPO}/pulls" \
+      -X GET \
+      -f state=open \
+      -f base="$base_branch" \
+      -f head="${REPO_OWNER}:${mission_branch}" \
+      --jq '.[0].html_url // empty')
+    echo "$final_pr"
+    return 0
   }
 
+  final_pr=$(jq -r '.html_url // empty' <<< "$created_pr_json")
   echo "$final_pr"
 }
 
