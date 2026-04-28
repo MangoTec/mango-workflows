@@ -1,0 +1,33 @@
+#!/usr/bin/env bats
+
+load "${BATS_LIB_PATH:-/opt/homebrew/lib}/bats-support/load"
+load "${BATS_LIB_PATH:-/opt/homebrew/lib}/bats-assert/load"
+
+setup() {
+  SCRIPT="$BATS_TEST_DIRNAME/../lib/wave-ready.sh"
+}
+
+@test "final PR body references mission issues without closing them" {
+  run grep -F 'all_issues="${all_issues}- #${issue_num}"' "$SCRIPT"
+  assert_success
+
+  run grep -F 'all_issues="${all_issues}- Closes #${issue_num}"' "$SCRIPT"
+  assert_failure
+
+  run grep -F 'Issues are closed/reconciled by wave automation when each consolidated wave PR is merged.' "$SCRIPT"
+  assert_success
+}
+
+@test "already-merged wave path reconciles completed issues" {
+  run grep -F 'find_merged_wave_pr_json "$MISSION_BRANCH" "$CONSOLIDATED_BRANCH"' "$SCRIPT"
+  assert_success
+
+  run grep -F 'reconcile_wave_issues "$CONFIG" "$WAVE" "$MERGED_WAVE_PR_NUMBER" "$MERGED_WAVE_PR_URL"' "$SCRIPT"
+  assert_success
+
+  run grep -F 'gh_auth issue close "$issue_num"' "$SCRIPT"
+  assert_success
+
+  run grep -F 'for label in status:ready status:in-progress status:blocked status:failed status:spec-invalid needs-human; do' "$SCRIPT"
+  assert_success
+}

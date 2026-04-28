@@ -275,6 +275,54 @@ sync_wave_pr() {
   fi
 }
 
+remove_transient_issue_labels() {
+  local issue_num="$1"
+  local label
+
+  for label in status:ready status:in-progress status:blocked status:failed status:spec-invalid needs-human; do
+    gh_auth issue edit "$issue_num" --remove-label "$label" 2>/dev/null || true
+  done
+}
+
+mark_issue_completed_by_wave_pr() {
+  local issue_num="$1" pr_number="$2" pr_url="$3"
+  local state
+
+  state=$(gh_auth issue view "$issue_num" --json state --jq '.state' 2>/dev/null || echo "UNKNOWN")
+
+  if [ "$state" = "OPEN" ]; then
+    gh_auth issue close "$issue_num" \
+      --comment "✅ Implementado y mergeado en la PR consolidada #${pr_number}: ${pr_url}" \
+      2>/dev/null || true
+  fi
+
+  remove_transient_issue_labels "$issue_num"
+}
+
+reconcile_wave_issues() {
+  local config="$1" wave="$2" pr_number="$3" pr_url="$4"
+  local issue_num
+  local -a RECONCILE_WAVE_ISSUES
+
+  mapfile -t RECONCILE_WAVE_ISSUES < <(wave_get_issues "$config" "$wave")
+
+  for issue_num in "${RECONCILE_WAVE_ISSUES[@]}"; do
+    mark_issue_completed_by_wave_pr "$issue_num" "$pr_number" "$pr_url"
+  done
+}
+
+find_merged_wave_pr_json() {
+  local base_branch="$1" head_branch="$2"
+
+  gh_auth api "repos/${REPO}/pulls" \
+    -X GET \
+    -f state=closed \
+    -f base="$base_branch" \
+    -f head="${REPO_OWNER}:${head_branch}" \
+    --jq '[.[] | select(.merged_at != null)] | sort_by(.number) | last // empty' \
+    2>/dev/null || true
+}
+
 unlock_next_wave() {
   local config="$1" next_wave="$2"
   local issue_num
@@ -307,13 +355,13 @@ create_final_pr_if_needed() {
   for wave in $(jq -r '.waves | keys[]' "$config" | sort -n); do
     mapfile -t WAVE_ISSUES < <(wave_get_issues "$config" "$wave")
     for issue_num in "${WAVE_ISSUES[@]}"; do
-      all_issues="${all_issues}- Closes #${issue_num}"$'\n'
+      all_issues="${all_issues}- #${issue_num}"$'\n'
     done
   done
 
   pr_title="feat(${mission_id}): complete mission"
   # shellcheck disable=SC2016
-  pr_body=$(printf '## Mission `%s` — Final PR\n\nAll waves complete. This PR merges the full mission branch into `%s`.\n\n### Issues included\n%s\n### Review\nReview the combined changes, approve, and merge.' "$mission_id" "$base_branch" "$all_issues")
+  pr_body=$(printf '## Mission `%s` — Final PR\n\nAll waves complete. This PR merges the full mission branch into `%s`.\n\n### Issues included\n%s\nIssues are closed/reconciled by wave automation when each consolidated wave PR is merged.\n\n### Review\nReview the combined changes, approve, and merge.' "$mission_id" "$base_branch" "$all_issues")
 
   created_pr_json=$(gh_pat api "repos/${REPO}/pulls" \
     -X POST \
@@ -381,7 +429,7 @@ run_verify_hooks() {
 
 finalize_merged_wave_pr() {
   local event_head event_base event_number event_url config mission_id base_branch mission_branch wave consolidated_branch legacy_branch
-  local matched_config="" matched_wave="" issue_num gate_type gate_issue next_wave final_pr run_url next_count state
+  local matched_config="" matched_wave="" issue_num gate_type gate_issue next_wave final_pr run_url next_count
 
   event_head=$(jq -r '.pull_request.head.ref // empty' "$GITHUB_EVENT_PATH")
   event_base=$(jq -r '.pull_request.base.ref // empty' "$GITHUB_EVENT_PATH")
@@ -429,18 +477,7 @@ finalize_merged_wave_pr() {
   git checkout --detach "origin/$mission_branch" 2>/dev/null || true
 
   mapfile -t WAVE_ISSUES < <(wave_get_issues "$config" "$wave")
-  for issue_num in "${WAVE_ISSUES[@]}"; do
-    state=$(gh_auth issue view "$issue_num" --json state --jq '.state' 2>/dev/null || echo "UNKNOWN")
-    if [ "$state" = "OPEN" ]; then
-      gh_auth issue close "$issue_num" \
-        --comment "✅ Implementado y mergeado en la PR consolidada #${event_number}: ${event_url}" \
-        2>/dev/null || true
-    else
-      gh_auth issue comment "$issue_num" \
-        --body "✅ Incluido en la PR consolidada #${event_number}: ${event_url}" \
-        2>/dev/null || true
-    fi
-  done
+  reconcile_wave_issues "$config" "$wave" "$event_number" "$event_url"
 
   # Close individual task PRs (never merged — consolidated PR replaces them)
   local all_open_prs child_pr_numbers pr_num
@@ -606,8 +643,19 @@ for CONFIG in $(mission_list_effective_active_configs "$MISSIONS_DIR"); do
     NEXT_WAVE=$((WAVE + 1))
     GATE_ISSUE=$(jq -r ".waveGates[\"$WAVE\"] // empty" "$CONFIG")
 
-    if gh_auth pr list --head "$CONSOLIDATED_BRANCH" --base "$MISSION_BRANCH" --state merged --json number --jq 'length > 0' | grep -q true; then
+    MERGED_WAVE_PR_JSON=$(find_merged_wave_pr_json "$MISSION_BRANCH" "$CONSOLIDATED_BRANCH")
+    if [ -z "$MERGED_WAVE_PR_JSON" ] || [ "$MERGED_WAVE_PR_JSON" = "null" ]; then
+      LEGACY_CONSOLIDATED_BRANCH="wave-${WAVE}/consolidate"
+      MERGED_WAVE_PR_JSON=$(find_merged_wave_pr_json "$MISSION_BRANCH" "$LEGACY_CONSOLIDATED_BRANCH")
+    fi
+
+    if [ -n "$MERGED_WAVE_PR_JSON" ] && [ "$MERGED_WAVE_PR_JSON" != "null" ]; then
+      MERGED_WAVE_PR_NUMBER=$(jq -r '.number // empty' <<< "$MERGED_WAVE_PR_JSON")
+      MERGED_WAVE_PR_URL=$(jq -r '.html_url // empty' <<< "$MERGED_WAVE_PR_JSON")
       echo "Wave $WAVE already merged via $CONSOLIDATED_BRANCH"
+      if [ -n "$MERGED_WAVE_PR_NUMBER" ] && [ -n "$MERGED_WAVE_PR_URL" ]; then
+        reconcile_wave_issues "$CONFIG" "$WAVE" "$MERGED_WAVE_PR_NUMBER" "$MERGED_WAVE_PR_URL"
+      fi
       continue
     fi
 
