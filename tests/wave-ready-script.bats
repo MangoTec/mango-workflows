@@ -42,3 +42,14 @@ setup() {
   run grep -F 'remove_transient_issue_labels "$issue_num"' "$SCRIPT"
   assert_success
 }
+
+@test "already-merged wave path closes resolved gate issues by default" {
+  run grep -F ".cleanup.closeResolvedGateIssues // true" "$SCRIPT"
+  assert_success
+
+  run grep -F 'close_resolved_gate_issue "$CONFIG" "$WAVE" "✅ **Wave $WAVE reconciled.' "$SCRIPT"
+  assert_success
+
+  run grep -F 'gh_auth issue close "$gate_issue" --reason completed' "$SCRIPT"
+  assert_success
+}

@@ -326,6 +326,34 @@ cleanup_closed_wave_issue_labels() {
   done
 }
 
+should_close_resolved_gate_issues() {
+  local config="$1"
+
+  [ "$(jq -r '.cleanup.closeResolvedGateIssues // true' "$config")" = "true" ]
+}
+
+close_resolved_gate_issue() {
+  local config="$1" wave="$2" message="${3:-}"
+  local gate_issue gate_state
+
+  should_close_resolved_gate_issues "$config" || return 0
+
+  gate_issue=$(jq -r ".waveGates[\"$wave\"] // empty" "$config")
+  if [ -z "$gate_issue" ] || [ "$gate_issue" = "null" ]; then
+    return 0
+  fi
+
+  gate_state=$(gh_auth issue view "$gate_issue" --json state --jq '.state' 2>/dev/null || echo "UNKNOWN")
+  gh_auth issue edit "$gate_issue" --add-label "gate:approved" 2>/dev/null || true
+
+  if [ "$gate_state" = "OPEN" ]; then
+    if [ -n "$message" ]; then
+      gh_auth issue comment "$gate_issue" --body "$message" 2>/dev/null || true
+    fi
+    gh_auth issue close "$gate_issue" --reason completed 2>/dev/null || true
+  fi
+}
+
 find_merged_wave_pr_json() {
   local base_branch="$1" head_branch="$2"
 
@@ -554,10 +582,7 @@ finalize_merged_wave_pr() {
         unlock_next_wave "$config" "$next_wave"
         if [ -n "$gate_issue" ] && [ "$gate_issue" != "null" ]; then
           gh_auth issue comment "$gate_issue" --body "✅ **Wave $wave approved via consolidated PR #$event_number.** Wave $next_wave unlocked."
-          gh_auth issue edit "$gate_issue" --add-label "gate:approved" 2>/dev/null || true
-          if [ "$(jq -r '.cleanup.closeResolvedGateIssues // false' "$config")" = "true" ]; then
-            gh_auth issue close "$gate_issue" --reason completed 2>/dev/null || true
-          fi
+          close_resolved_gate_issue "$config" "$wave"
         fi
         ;;
       verify-then-auto)
@@ -565,9 +590,7 @@ finalize_merged_wave_pr() {
           unlock_next_wave "$config" "$next_wave"
           if [ -n "$gate_issue" ] && [ "$gate_issue" != "null" ]; then
             gh_auth issue comment "$gate_issue" --body "🟢 **Wave $wave verified and auto-approved after PR #$event_number.** Wave $next_wave unlocked."
-            if [ "$(jq -r '.cleanup.closeResolvedGateIssues // false' "$config")" = "true" ]; then
-              gh_auth issue close "$gate_issue" --reason completed 2>/dev/null || true
-            fi
+            close_resolved_gate_issue "$config" "$wave"
           fi
         else
           local comment
@@ -595,9 +618,7 @@ finalize_merged_wave_pr() {
     final_pr=$(create_final_pr_if_needed "$config" "$mission_id")
     if [ -n "$gate_issue" ] && [ "$gate_issue" != "null" ]; then
       gh_auth issue comment "$gate_issue" --body "🎊 **All waves complete!** Final PR: ${final_pr:-no final PR needed}."
-      if [ "$(jq -r '.cleanup.closeResolvedGateIssues // false' "$config")" = "true" ]; then
-        gh_auth issue close "$gate_issue" --reason completed 2>/dev/null || true
-      fi
+      close_resolved_gate_issue "$config" "$wave"
     fi
     notify_slack "🎊 *Misión completa*\n• Repo: \`${REPO_NAME}\`\n• Misión: \`${mission_id}\`\n• Final PR: ${final_pr:-no aplica}"
   fi
@@ -670,6 +691,7 @@ for CONFIG in $(mission_list_effective_active_configs "$MISSIONS_DIR"); do
       echo "Wave $WAVE already merged via $CONSOLIDATED_BRANCH"
       if [ -n "$MERGED_WAVE_PR_NUMBER" ] && [ -n "$MERGED_WAVE_PR_URL" ]; then
         reconcile_wave_issues "$CONFIG" "$WAVE" "$MERGED_WAVE_PR_NUMBER" "$MERGED_WAVE_PR_URL"
+        close_resolved_gate_issue "$CONFIG" "$WAVE" "✅ **Wave $WAVE reconciled.** Consolidated PR #${MERGED_WAVE_PR_NUMBER} was already merged: ${MERGED_WAVE_PR_URL}"
       fi
       continue
     fi
