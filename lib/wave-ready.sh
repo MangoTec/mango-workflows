@@ -239,7 +239,11 @@ sync_wave_pr() {
   PR_CREATED=false
   PR_PUSHED=false
 
-  if [ "${REMOTE_BRANCH_EXISTS:-false}" = true ] && git diff --quiet "origin/$head_branch...HEAD"; then
+  # Compare the generated tree directly with the remote consolidated branch.
+  # A triple-dot comparison can pick an older merge-base when the consolidated
+  # branch contains previous automation/CI trigger commits, causing false
+  # "content changes" and unnecessary force-pushes that reset PR checks.
+  if [ "${REMOTE_BRANCH_EXISTS:-false}" = true ] && git diff --quiet "origin/$head_branch" HEAD; then
     echo "No content changes detected for $head_branch"
   else
     git push origin "$head_branch" --force-with-lease
