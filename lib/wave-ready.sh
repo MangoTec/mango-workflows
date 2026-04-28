@@ -311,6 +311,21 @@ reconcile_wave_issues() {
   done
 }
 
+cleanup_closed_wave_issue_labels() {
+  local config="$1" wave="$2"
+  local issue_num state
+  local -a CLEANUP_WAVE_ISSUES
+
+  mapfile -t CLEANUP_WAVE_ISSUES < <(wave_get_issues "$config" "$wave")
+
+  for issue_num in "${CLEANUP_WAVE_ISSUES[@]}"; do
+    state=$(gh_auth issue view "$issue_num" --json state --jq '.state' 2>/dev/null || echo "UNKNOWN")
+    if [ "$state" = "CLOSED" ]; then
+      remove_transient_issue_labels "$issue_num"
+    fi
+  done
+}
+
 find_merged_wave_pr_json() {
   local base_branch="$1" head_branch="$2"
 
@@ -663,6 +678,9 @@ for CONFIG in $(mission_list_effective_active_configs "$MISSIONS_DIR"); do
       GATE_STATE=$(gh_auth issue view "$GATE_ISSUE" --json state --jq '.state' 2>/dev/null || echo "UNKNOWN")
       if [ "$GATE_STATE" = "CLOSED" ]; then
         echo "Gate #$GATE_ISSUE already closed for wave $WAVE"
+        if [ "$(jq -r '.cleanup.removeLabelsOnComplete // false' "$CONFIG")" = "true" ]; then
+          cleanup_closed_wave_issue_labels "$CONFIG" "$WAVE"
+        fi
         continue
       fi
     fi

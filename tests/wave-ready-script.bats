@@ -31,3 +31,14 @@ setup() {
   run grep -F 'for label in status:ready status:in-progress status:blocked status:failed status:spec-invalid needs-human; do' "$SCRIPT"
   assert_success
 }
+
+@test "gate-closed wave path cleans labels from already closed issues" {
+  run grep -F 'cleanup_closed_wave_issue_labels "$CONFIG" "$WAVE"' "$SCRIPT"
+  assert_success
+
+  run grep -F 'if [ "$state" = "CLOSED" ]; then' "$SCRIPT"
+  assert_success
+
+  run grep -F 'remove_transient_issue_labels "$issue_num"' "$SCRIPT"
+  assert_success
+}
