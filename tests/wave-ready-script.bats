@@ -14,7 +14,7 @@ setup() {
   run grep -F 'all_issues="${all_issues}- Closes #${issue_num}"' "$SCRIPT"
   assert_failure
 
-  run grep -F 'Issues are closed/reconciled by wave automation when each consolidated wave PR is merged.' "$SCRIPT"
+  run grep -F 'Issues are closed/reconciled by wave automation as each wave completes.' "$SCRIPT"
   assert_success
 }
 

@@ -404,7 +404,7 @@ create_final_pr_if_needed() {
 
   pr_title="feat(${mission_id}): complete mission"
   # shellcheck disable=SC2016
-  pr_body=$(printf '## Mission `%s` — Final PR\n\nAll waves complete. This PR merges the full mission branch into `%s`.\n\n### Issues included\n%s\nIssues are closed/reconciled by wave automation when each consolidated wave PR is merged.\n\n### Review\nReview the combined changes, approve, and merge.' "$mission_id" "$base_branch" "$all_issues")
+  pr_body=$(printf '## Mission `%s` — Final PR\n\nAll waves complete. This PR merges the full mission branch into `%s`.\n\n### Issues included\n%s\nIssues are closed/reconciled by wave automation as each wave completes.\n\n### Review\nReview the combined changes, approve, and merge.' "$mission_id" "$base_branch" "$all_issues")
 
   created_pr_json=$(gh_pat api "repos/${REPO}/pulls" \
     -X POST \
