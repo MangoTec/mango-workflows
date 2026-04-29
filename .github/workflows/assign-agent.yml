@@ -277,6 +277,13 @@ jobs:
             fi
           fi
 
+          PACKAGE_MANAGER_INSTRUCTIONS=$(cat <<'PACKAGE_RULES'
+          **Dependency and lockfile policy (mandatory)**:
+          Do NOT modify package manager files (`package.json`, `package-lock.json`, `npm-shrinkwrap.json`, `yarn.lock`, `pnpm-lock.yaml`, `bun.lockb`, etc.) unless this issue explicitly requests a dependency, tooling, or package-manager change.
+          If a new dependency seems useful but is not explicitly requested, reuse existing project dependencies or implement the change without adding packages. If a package file change is truly required, keep it minimal and explain why in the PR body.
+          PACKAGE_RULES
+          )
+
           # 2. Build the full comment
           COMMENT=$(cat <<INSTRUCTIONS
           ⚠️ **IMPORTANT — Mandatory Instructions**
@@ -285,6 +292,8 @@ jobs:
           Include \`Closes #$ISSUE_NUMBER\` in the PR body.
 
           $TESTING_INSTRUCTIONS
+
+          $PACKAGE_MANAGER_INSTRUCTIONS
 
           Do NOT skip tests. A PR without tests will be rejected.
           INSTRUCTIONS
@@ -319,6 +328,8 @@ jobs:
           Work from the mission branch \`${MISSION_BRANCH}\` for mission \`${MISSION_ID}\`.
           Your pull request must target \`${MISSION_BRANCH}\`, not \`main\`.
           Include \`Closes #${ISSUE_NUMBER}\` in the PR body.
+          Do NOT modify package manager files (\`package.json\`, \`package-lock.json\`, \`npm-shrinkwrap.json\`, \`yarn.lock\`, \`pnpm-lock.yaml\`, \`bun.lockb\`, etc.) unless issue #${ISSUE_NUMBER} explicitly requests a dependency, tooling, or package-manager change.
+          If a package file change is truly required, keep it minimal and explain why in the PR body.
           INSTRUCTIONS
           )
 
