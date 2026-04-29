@@ -28,9 +28,27 @@ else
   mkdir -p "$tmp_dir/missions"
   mission_configs=()
   for fname in $config_b64; do
+    default_config="$tmp_dir/missions/default-${fname}"
+    effective_config="$tmp_dir/missions/${fname}"
     file_b64="$(gh api "repos/${REPO}/contents/.github/missions/${fname}" --jq '.content' | tr -d '\n')"
-    printf '%s' "$file_b64" | base64 --decode > "$tmp_dir/missions/${fname}"
-    mission_configs+=("$tmp_dir/missions/${fname}")
+    printf '%s' "$file_b64" | base64 --decode > "$default_config"
+
+    mission_branch="$(jq -r '.mission.missionBranch // "main"' "$default_config")"
+    branch_b64=""
+    if [ -n "$mission_branch" ] && [ "$mission_branch" != "main" ]; then
+      encoded_branch="$(jq -rn --arg ref "$mission_branch" '$ref | @uri')"
+      if ! branch_b64="$(gh api "repos/${REPO}/contents/.github/missions/${fname}?ref=${encoded_branch}" --jq '.content' 2>/dev/null | tr -d '\n')"; then
+        branch_b64=""
+      fi
+    fi
+
+    if [ -n "$branch_b64" ]; then
+      printf '%s' "$branch_b64" | base64 --decode > "$effective_config"
+    else
+      cp "$default_config" "$effective_config"
+    fi
+
+    mission_configs+=("$effective_config")
   done
 fi
 
@@ -44,7 +62,7 @@ all_issue_ids="$(echo "$all_issue_ids" | awk 'NF' | sort -n | uniq)"
 mkdir -p "$tmp_dir/issues"
 
 for issue_id in $all_issue_ids; do
-  gh issue view "$issue_id" -R "$REPO" --json number,state,title,labels,url,assignees > "$tmp_dir/issues/${issue_id}.json"
+  gh issue view "$issue_id" -R "$REPO" --json number,state,title,labels,url,assignees,updatedAt > "$tmp_dir/issues/${issue_id}.json"
 done
 
 issues_json="$(jq -s '
@@ -53,6 +71,7 @@ issues_json="$(jq -s '
     state,
     title,
     url,
+    updatedAt,
     labels: [.labels[].name],
     assignees: [.assignees[].login],
     statusClass: (
@@ -67,7 +86,7 @@ issues_json="$(jq -s '
   })
 ' "$tmp_dir/issues"/*.json)"
 
-open_prs_json="$(gh pr list -R "$REPO" --state open --json number,title,author,isDraft,url,headRefName,baseRefName)"
+open_prs_json="$(gh pr list -R "$REPO" --state open --json number,title,author,isDraft,url,headRefName,baseRefName,updatedAt,mergeStateStatus,statusCheckRollup)"
 
 declare -a workflow_files=(
   "assign-agent.yml"
@@ -158,6 +177,10 @@ cat > "$OUTPUT_HTML" <<'HTML'
       --state-blocked: #eceff3;
       --state-failed: #ffd3d3;
       --state-neutral: #efe7ff;
+      --health-ok: #16a34a;
+      --health-waiting: #ca8a04;
+      --health-action: #dc2626;
+      --health-blocked: #475569;
     }
 
     * { box-sizing: border-box; }
@@ -223,6 +246,92 @@ cat > "$OUTPUT_HTML" <<'HTML'
     .section-title {
       margin: 0 0 10px;
       font-size: 16px;
+      font-weight: 700;
+    }
+    .mission-control {
+      display: grid;
+      gap: 12px;
+    }
+    .mission-control-summary {
+      padding: 12px 14px;
+      border-radius: 12px;
+      background: #111827;
+      color: #f9fafb;
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: center;
+    }
+    .mission-control-summary strong {
+      color: var(--mango-yellow);
+    }
+    .mission-cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 12px;
+    }
+    .mission-card {
+      border: 1px solid #e5e7eb;
+      border-left-width: 6px;
+      border-radius: 14px;
+      background: #fff;
+      padding: 14px;
+      display: grid;
+      gap: 10px;
+    }
+    .mission-card.ok { border-left-color: var(--health-ok); }
+    .mission-card.waiting { border-left-color: var(--health-waiting); }
+    .mission-card.action { border-left-color: var(--health-action); }
+    .mission-card.blocked { border-left-color: var(--health-blocked); }
+    .mission-card-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      align-items: flex-start;
+    }
+    .mission-name {
+      font-weight: 800;
+      font-size: 16px;
+      line-height: 1.2;
+    }
+    .health-pill {
+      white-space: nowrap;
+      border-radius: 999px;
+      padding: 5px 9px;
+      font-size: 12px;
+      font-weight: 800;
+      color: white;
+    }
+    .health-pill.ok { background: var(--health-ok); }
+    .health-pill.waiting { background: var(--health-waiting); }
+    .health-pill.action { background: var(--health-action); }
+    .health-pill.blocked { background: var(--health-blocked); }
+    .next-action {
+      padding: 10px 12px;
+      border-radius: 10px;
+      background: #f8fafc;
+      border: 1px solid #e5e7eb;
+      font-size: 14px;
+      line-height: 1.45;
+    }
+    .next-action strong { color: #111827; }
+    .mission-facts {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .fact {
+      border-radius: 999px;
+      border: 1px solid #e5e7eb;
+      color: #475569;
+      background: #f8fafc;
+      padding: 4px 8px;
+      font-size: 11px;
+      font-weight: 700;
+    }
+    .mission-card a {
+      color: #0f172a;
       font-weight: 700;
     }
     .stats {
@@ -334,6 +443,11 @@ cat > "$OUTPUT_HTML" <<'HTML'
     <div class="mode-banner" id="mode-banner"></div>
 
     <section class="card">
+      <h2 class="section-title">Mission Control</h2>
+      <div class="mission-control" id="mission-control"></div>
+    </section>
+
+    <section class="card">
       <h2 class="section-title">Snapshot</h2>
       <p class="snapshot-story" id="snapshot-story"></p>
       <div class="stats" id="stats"></div>
@@ -365,6 +479,7 @@ __JSON_PLACEHOLDER__
     const modeBanner = document.getElementById('mode-banner');
     const snapshotStoryEl = document.getElementById('snapshot-story');
     const metaEl = document.getElementById('meta');
+    const missionControlEl = document.getElementById('mission-control');
     const statsEl = document.getElementById('stats');
     const flowEl = document.getElementById('flow');
     const prsEl = document.getElementById('prs');
@@ -386,7 +501,305 @@ __JSON_PLACEHOLDER__
       })));
     };
 
+    const checkSummary = (pr) => {
+      const checks = pr.statusCheckRollup || [];
+      const actionableChecks = checks.filter((check) => {
+        const name = check.name || check.context || '';
+        return name !== 'Vercel Preview Comments';
+      });
+
+      const failed = actionableChecks.filter((check) =>
+        check.conclusion === 'FAILURE' ||
+        check.conclusion === 'TIMED_OUT' ||
+        check.conclusion === 'CANCELLED' ||
+        check.conclusion === 'ACTION_REQUIRED' ||
+        check.state === 'FAILURE' ||
+        check.state === 'ERROR'
+      );
+      const pending = actionableChecks.filter((check) =>
+        check.status && check.status !== 'COMPLETED' ||
+        check.state === 'PENDING' ||
+        check.state === 'EXPECTED'
+      );
+      const passed = actionableChecks.filter((check) =>
+        check.conclusion === 'SUCCESS' || check.state === 'SUCCESS'
+      );
+
+      if (failed.length > 0) {
+        return { state: 'failure', label: `${failed.length} check(s) fallando`, check: failed[0] };
+      }
+
+      if (pending.length > 0) {
+        return { state: 'pending', label: `${pending.length} check(s) en curso`, check: pending[0] };
+      }
+
+      if (actionableChecks.length > 0 && passed.length === actionableChecks.length) {
+        return { state: 'success', label: 'checks green' };
+      }
+
+      return { state: 'unknown', label: 'sin checks concluyentes' };
+    };
+
+    const missionPrs = (data, mission) => {
+      const missionId = mission.id || 'default';
+      return (data.openPrs || []).filter((pr) =>
+        pr.baseRefName === mission.missionBranch ||
+        pr.headRefName?.includes(missionId) ||
+        pr.title?.includes(missionId)
+      );
+    };
+
+    const findConsolidatedPr = (prs, missionId, waveId) =>
+      prs.find((pr) =>
+        pr.headRefName === `consolidate/${missionId}--wave-${waveId}` ||
+        pr.headRefName === `wave-${waveId}/consolidate` ||
+        pr.title?.includes(`wave-${waveId}`)
+      );
+
+    const findChildPrForIssue = (prs, issueNumber) =>
+      prs.find((pr) =>
+        !pr.headRefName?.startsWith('consolidate/') &&
+        !pr.headRefName?.match(/^wave-\d+\/consolidate$/) &&
+        (pr.title?.includes(`#${issueNumber}`) || false)
+      );
+
+    const currentWaveForMission = (mission, prs) => {
+      const waves = mission.waves || [];
+      const active = waves.find((wave) => {
+        const issues = wave.issues || [];
+        const hasOpenIssue = issues.some((issue) => issue.state !== 'CLOSED');
+        const hasPr = Boolean(findConsolidatedPr(prs, mission.id, wave.id));
+        return hasOpenIssue || hasPr;
+      });
+
+      return active || waves[waves.length - 1] || null;
+    };
+
+    const issueStats = (waves) => {
+      const issues = (waves || []).flatMap((wave) => wave.issues || []);
+      const count = (status) => issues.filter((issue) => issue.statusClass === status).length;
+      return {
+        total: issues.length,
+        done: count('done'),
+        failed: count('failed'),
+        inprogress: count('inprogress'),
+        ready: count('ready'),
+        blocked: count('blocked'),
+        open: issues.filter((issue) => issue.state !== 'CLOSED').length,
+      };
+    };
+
+    const missionDiagnosis = (data, mission) => {
+      const prs = missionPrs(data, mission);
+      const stats = issueStats(mission.waves);
+      const currentWave = currentWaveForMission(mission, prs);
+      const currentIssues = currentWave?.issues || [];
+      const consolidatedPr = currentWave ? findConsolidatedPr(prs, mission.id, currentWave.id) : null;
+      const failedIssue = currentIssues.find((issue) => issue.statusClass === 'failed') ||
+        (mission.waves || []).flatMap((wave) => wave.issues || []).find((issue) => issue.statusClass === 'failed');
+      const readyIssue = currentIssues.find((issue) => issue.statusClass === 'ready');
+      const inProgressIssue = currentIssues.find((issue) => issue.statusClass === 'inprogress');
+      const blockedIssue = currentIssues.find((issue) => issue.statusClass === 'blocked');
+
+      if (consolidatedPr) {
+        const checks = checkSummary(consolidatedPr);
+        if (checks.state === 'failure') {
+          return {
+            level: 'action',
+            emoji: '🔴',
+            status: 'Acción requerida',
+            action: `CI fallando en PR #${consolidatedPr.number}: revisar o re-run para destrabar wave ${currentWave.id}.`,
+            why: checks.label,
+            link: consolidatedPr.url,
+            linkText: `Abrir PR #${consolidatedPr.number}`,
+            wave: currentWave,
+            stats,
+          };
+        }
+
+        if (checks.state === 'pending' || checks.state === 'unknown') {
+          return {
+            level: 'waiting',
+            emoji: '🟡',
+            status: 'Esperando CI',
+            action: `No hacer nada todavía: esperar checks de PR #${consolidatedPr.number}.`,
+            why: checks.label,
+            link: consolidatedPr.url,
+            linkText: `Ver PR #${consolidatedPr.number}`,
+            wave: currentWave,
+            stats,
+          };
+        }
+
+        return {
+          level: 'action',
+          emoji: '🔴',
+          status: 'Acción humana',
+          action: `Revisar y mergear PR #${consolidatedPr.number} para avanzar a wave ${currentWave.id + 1}.`,
+          why: 'La PR consolidada está lista; la automatización espera revisión/merge.',
+          link: consolidatedPr.url,
+          linkText: `Abrir PR #${consolidatedPr.number}`,
+          wave: currentWave,
+          stats,
+        };
+      }
+
+      if (failedIssue) {
+        return {
+          level: 'action',
+          emoji: '🔴',
+          status: 'Acción requerida',
+          action: `Revisar issue #${failedIssue.number}; quedó marcada como fallida o needs-human.`,
+          why: 'La automatización no debería avanzar hasta resolver esa falla.',
+          link: failedIssue.url,
+          linkText: `Abrir issue #${failedIssue.number}`,
+          wave: currentWave,
+          stats,
+        };
+      }
+
+      if (inProgressIssue) {
+        return {
+          level: 'waiting',
+          emoji: '🟡',
+          status: 'Agente trabajando',
+          action: `No hacer nada: el agente trabaja en issue #${inProgressIssue.number}.`,
+          why: 'Hay una tarea en progreso; esperar PR hija o actualización del agente.',
+          link: inProgressIssue.url,
+          linkText: `Ver issue #${inProgressIssue.number}`,
+          wave: currentWave,
+          stats,
+        };
+      }
+
+      if (readyIssue) {
+        return {
+          level: 'waiting',
+          emoji: '🟡',
+          status: 'Esperando agente',
+          action: `No hacer nada por ahora: issue #${readyIssue.number} está lista para asignación.`,
+          why: 'Si sigue así más de ~30 min, conviene revisar Assign Agent.',
+          link: readyIssue.url,
+          linkText: `Ver issue #${readyIssue.number}`,
+          wave: currentWave,
+          stats,
+        };
+      }
+
+      if (blockedIssue || stats.blocked > 0) {
+        const issue = blockedIssue || (mission.waves || []).flatMap((wave) => wave.issues || []).find((item) => item.statusClass === 'blocked');
+        return {
+          level: 'blocked',
+          emoji: '⚫',
+          status: 'Bloqueada',
+          action: issue ? `Esperando dependencia/gate en issue #${issue.number}.` : 'Esperando dependencias/gates.',
+          why: 'No hay acción automática posible hasta que se desbloquee la dependencia.',
+          link: issue?.url,
+          linkText: issue ? `Ver issue #${issue.number}` : '',
+          wave: currentWave,
+          stats,
+        };
+      }
+
+      if (stats.total > 0 && stats.done === stats.total) {
+        return {
+          level: 'ok',
+          emoji: '🟢',
+          status: 'Completa',
+          action: 'No hacer nada: todas las issues de la misión están cerradas.',
+          why: 'La misión no tiene trabajo pendiente en el dashboard.',
+          wave: currentWave,
+          stats,
+        };
+      }
+
+      return {
+        level: 'ok',
+        emoji: '🟢',
+        status: 'En orden',
+        action: 'No hacer nada: no hay bloqueadores ni acciones humanas detectadas.',
+        why: 'La misión está esperando el siguiente evento automático.',
+        wave: currentWave,
+        stats,
+      };
+    };
+
+    const renderMissionControl = (data) => {
+      const missions = data.missions || [{
+        id: 'default',
+        name: 'Default mission',
+        missionBranch: 'main',
+        waves: data.waves || [],
+      }];
+      const priority = { action: 0, blocked: 1, waiting: 2, ok: 3 };
+      const diagnoses = missions.map((mission) => ({ mission, diagnosis: missionDiagnosis(data, mission) }));
+      const sortedDiagnoses = [...diagnoses].sort((a, b) =>
+        (priority[a.diagnosis.level] ?? 9) - (priority[b.diagnosis.level] ?? 9)
+      );
+      const firstAction = sortedDiagnoses.find((item) => item.diagnosis.level === 'action');
+      const waiting = diagnoses.filter((item) => item.diagnosis.level === 'waiting').length;
+      const blocked = diagnoses.filter((item) => item.diagnosis.level === 'blocked').length;
+
+      const headline = firstAction
+        ? `<strong>Qué tenés que hacer ahora:</strong> ${firstAction.diagnosis.action}`
+        : blocked > 0
+          ? `<strong>Atención:</strong> hay ${blocked} misión(es) bloqueada(s), pero sin PR lista para merge.`
+          : waiting > 0
+            ? `<strong>No hacer nada todavía:</strong> ${waiting} misión(es) están esperando CI/agente.`
+            : '<strong>Todo en orden:</strong> no hay acciones humanas detectadas.';
+
+      const cards = sortedDiagnoses.map(({ mission, diagnosis }) => {
+        const waveText = diagnosis.wave ? `Wave ${diagnosis.wave.id}` : 'Sin wave';
+        const link = diagnosis.link ? `<a href="${diagnosis.link}" target="_blank" rel="noreferrer">${diagnosis.linkText}</a>` : '';
+
+        return `<article class="mission-card ${diagnosis.level}">
+          <div class="mission-card-head">
+            <div>
+              <div class="mission-name">${mission.id}</div>
+              <div class="muted">${mission.name || mission.id}</div>
+            </div>
+            <span class="health-pill ${diagnosis.level}">${diagnosis.emoji} ${diagnosis.status}</span>
+          </div>
+          <div class="next-action"><strong>Next action:</strong> ${diagnosis.action} ${link}</div>
+          <div class="muted">${diagnosis.why}</div>
+          <div class="mission-facts">
+            <span class="fact">${waveText}</span>
+            <span class="fact">${diagnosis.stats.done}/${diagnosis.stats.total} issues done</span>
+            <span class="fact">${diagnosis.stats.inprogress} in progress</span>
+            <span class="fact">${diagnosis.stats.blocked} blocked</span>
+          </div>
+        </article>`;
+      }).join('');
+
+      missionControlEl.innerHTML = `
+        <div class="mission-control-summary">
+          <div>${headline}</div>
+          <div class="muted">${diagnoses.length} misión(es) monitoreadas</div>
+        </div>
+        <div class="mission-cards">${cards}</div>
+      `;
+    };
+
     const buildSnapshotStory = (data, metrics) => {
+      if (Array.isArray(data.missions)) {
+        const diagnoses = data.missions.map((mission) => missionDiagnosis(data, mission));
+        const action = diagnoses.find((diagnosis) => diagnosis.level === 'action');
+        const blocked = diagnoses.find((diagnosis) => diagnosis.level === 'blocked');
+        const waitingCount = diagnoses.filter((diagnosis) => diagnosis.level === 'waiting').length;
+
+        if (action) {
+          return `<strong>Acción requerida:</strong> ${action.action}`;
+        }
+
+        if (blocked) {
+          return `<strong>Bloqueado:</strong> ${blocked.action}`;
+        }
+
+        if (waitingCount > 0) {
+          return `<strong>En espera:</strong> ${waitingCount} misión(es) esperan CI/agente. No hay acción humana inmediata.`;
+        }
+      }
+
       const latestConsolidatedPr = data.openPrs.find((pr) =>
         pr.headRefName?.startsWith('wave-') || pr.headRefName?.startsWith('consolidate/')
       );
@@ -453,6 +866,7 @@ __JSON_PLACEHOLDER__
       };
 
       renderModeBanner(sourceMode, data);
+      renderMissionControl(data);
       snapshotStoryEl.innerHTML = buildSnapshotStory(data, metrics);
       metaEl.innerHTML = `${data.repo}<br><span class="muted">Updated ${data.generatedAt}</span>`;
 
