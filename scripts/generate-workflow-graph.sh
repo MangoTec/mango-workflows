@@ -370,9 +370,27 @@ __JSON_PLACEHOLDER__
     const prsEl = document.getElementById('prs');
     const runsEl = document.getElementById('runs');
 
+    const getWaves = (data) => {
+      if (Array.isArray(data.waves)) {
+        return data.waves;
+      }
+
+      if (!Array.isArray(data.missions)) {
+        return [];
+      }
+
+      return data.missions.flatMap((mission) => (mission.waves || []).map((wave) => ({
+        ...wave,
+        missionId: mission.id,
+        missionName: mission.name || mission.id,
+      })));
+    };
+
     const buildSnapshotStory = (data, metrics) => {
-      const latestConsolidatedPr = data.openPrs.find((pr) => pr.headRefName?.startsWith('wave-'));
-      const waveFromRef = latestConsolidatedPr?.headRefName?.match(/^wave-(\d+)/)?.[1];
+      const latestConsolidatedPr = data.openPrs.find((pr) =>
+        pr.headRefName?.startsWith('wave-') || pr.headRefName?.startsWith('consolidate/')
+      );
+      const waveFromRef = latestConsolidatedPr?.headRefName?.match(/wave-(\d+)/)?.[1];
 
       if (latestConsolidatedPr && waveFromRef) {
         const nextWave = Number(waveFromRef) + 1;
@@ -422,7 +440,8 @@ __JSON_PLACEHOLDER__
     };
 
     const renderPage = (data, sourceMode) => {
-      const allIssues = data.waves.flatMap((wave) => wave.issues);
+      const waves = getWaves(data);
+      const allIssues = waves.flatMap((wave) => wave.issues || []);
       const countByStatus = (status) => allIssues.filter((issue) => issue.statusClass === status).length;
       const metrics = {
         totalIssues: allIssues.length,
@@ -438,6 +457,8 @@ __JSON_PLACEHOLDER__
       metaEl.innerHTML = `${data.repo}<br><span class="muted">Updated ${data.generatedAt}</span>`;
 
       const stats = [
+        ['Missions', data.missions?.length || 1],
+        ['Waves', waves.length],
         ['Total Issues', metrics.totalIssues],
         ['In Progress', metrics.inProgress],
         ['Ready', metrics.ready],
@@ -447,9 +468,9 @@ __JSON_PLACEHOLDER__
       ];
       statsEl.innerHTML = stats.map(([k,v]) => `<div class="stat"><div class="muted">${k}</div><b>${v}</b></div>`).join('');
 
-      flowEl.innerHTML = data.waves.map((wave) => {
+      flowEl.innerHTML = waves.map((wave) => {
       const gate = wave.gateIssueId ? `<span class="chip">Gate #${wave.gateIssueId}</span>` : '<span class="chip">No gate</span>';
-      const issues = wave.issues.map((issue) => {
+      const issues = (wave.issues || []).map((issue) => {
         return `<div class="issue ${issue.statusClass}">
           <a href="${issue.url}" target="_blank" rel="noreferrer">
             <div class="title">#${issue.number} ${issue.title}</div>
@@ -458,7 +479,7 @@ __JSON_PLACEHOLDER__
         </div>`;
       }).join('');
       return `<div class="wave">
-        <div class="wave-head">Wave ${wave.id}${gate}</div>
+        <div class="wave-head">${wave.missionId ? `${wave.missionId} · ` : ''}Wave ${wave.id}${gate}</div>
         <div class="issues">${issues}</div>
       </div>`;
     }).join('');
