@@ -521,7 +521,13 @@ __JSON_PLACEHOLDER__
         check.state === 'PENDING' ||
         check.state === 'EXPECTED'
       );
-      const passed = actionableChecks.filter((check) =>
+      const terminalOk = actionableChecks.filter((check) =>
+        check.conclusion === 'SUCCESS' ||
+        check.conclusion === 'SKIPPED' ||
+        check.conclusion === 'NEUTRAL' ||
+        check.state === 'SUCCESS'
+      );
+      const hasPositiveSignal = actionableChecks.some((check) =>
         check.conclusion === 'SUCCESS' || check.state === 'SUCCESS'
       );
 
@@ -533,7 +539,11 @@ __JSON_PLACEHOLDER__
         return { state: 'pending', label: `${pending.length} check(s) en curso`, check: pending[0] };
       }
 
-      if (actionableChecks.length > 0 && passed.length === actionableChecks.length) {
+      if (
+        actionableChecks.length > 0 &&
+        hasPositiveSignal &&
+        terminalOk.length === actionableChecks.length
+      ) {
         return { state: 'success', label: 'checks green' };
       }
 
@@ -631,11 +641,16 @@ __JSON_PLACEHOLDER__
           };
         }
 
+        const nextWave = (mission.waves || []).find((wave) => Number(wave.id) === Number(currentWave.id) + 1);
+        const reviewAction = nextWave
+          ? `Revisar y mergear PR #${consolidatedPr.number} para avanzar a wave ${nextWave.id}.`
+          : `Revisar y mergear PR #${consolidatedPr.number} para completar la misión.`;
+
         return {
           level: 'action',
           emoji: '🔴',
           status: 'Acción humana',
-          action: `Revisar y mergear PR #${consolidatedPr.number} para avanzar a wave ${currentWave.id + 1}.`,
+          action: reviewAction,
           why: 'La PR consolidada está lista; la automatización espera revisión/merge.',
           link: consolidatedPr.url,
           linkText: `Abrir PR #${consolidatedPr.number}`,
