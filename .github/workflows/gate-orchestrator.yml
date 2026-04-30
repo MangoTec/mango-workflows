@@ -343,7 +343,32 @@ jobs:
               VERIFY_ERRORS=""
 
               if [ -n "$VERIFY_HOOKS" ]; then
+                if [ -f package.json ]; then
+                  if [ -f package-lock.json ]; then
+                    INSTALL_CMD="npm ci --prefer-offline --no-audit"
+                  else
+                    INSTALL_CMD="npm install --no-audit"
+                  fi
+
+                  echo "Installing dependencies for verification: $INSTALL_CMD"
+                  set +e
+                  INSTALL_OUTPUT=$(eval "$INSTALL_CMD" 2>&1)
+                  INSTALL_EXIT=$?
+                  set -e
+
+                  if [ "$INSTALL_EXIT" -ne 0 ]; then
+                    VERIFY_PASSED=false
+                    VERIFY_ERRORS="$VERIFY_ERRORS\n### ❌ \`install\` failed (exit $INSTALL_EXIT)\n\`\`\`\n$(echo "$INSTALL_OUTPUT" | tail -50)\n\`\`\`\n"
+                  else
+                    echo "$INSTALL_OUTPUT" | tail -20
+                  fi
+                fi
+
                 for hook_name in $VERIFY_HOOKS; do
+                  if [ "$VERIFY_PASSED" != "true" ]; then
+                    break
+                  fi
+
                   HOOK_CMD=$(jq -r ".verification.hooks[\"$hook_name\"] // empty" "$CONFIG")
                   if [ -z "$HOOK_CMD" ]; then
                     echo "::warning::Verify hook '$hook_name' not found in verification.hooks"
