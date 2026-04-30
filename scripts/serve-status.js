@@ -77,6 +77,8 @@ function triggerRefresh(reason = 'request') {
   let stderr = '';
   let timedOut = false;
   let finished = false;
+  let timer;
+  let snapshotPoll;
 
   const appendLimited = (target, chunk) => {
     const next = target + chunk.toString();
@@ -92,10 +94,22 @@ function triggerRefresh(reason = 'request') {
     }
   };
 
+  const hasFreshSnapshot = () => {
+    try {
+      const html = fs.statSync(`${OUT}.html`);
+      const json = fs.statSync(`${OUT}.json`);
+      return html.size > 1_000 && json.size > 1_000 &&
+        html.mtimeMs >= lastRefreshStartedAt && json.mtimeMs >= lastRefreshStartedAt;
+    } catch (_) {
+      return false;
+    }
+  };
+
   const finish = (code, signal, error) => {
     if (finished) return;
     finished = true;
     clearTimeout(timer);
+    clearInterval(snapshotPoll);
     refreshInProgress = false;
     lastRefreshFinishedAt = Date.now();
 
@@ -114,7 +128,7 @@ function triggerRefresh(reason = 'request') {
     if (details) console.error(details.slice(-4000));
   };
 
-  const timer = setTimeout(() => {
+  timer = setTimeout(() => {
     timedOut = true;
     killProcessGroup('SIGTERM');
     setTimeout(() => {
@@ -123,6 +137,13 @@ function triggerRefresh(reason = 'request') {
     }, 5_000).unref();
   }, REFRESH_TIMEOUT_MS);
   timer.unref();
+
+  snapshotPoll = setInterval(() => {
+    if (!hasFreshSnapshot()) return;
+    killProcessGroup('SIGTERM');
+    finish(0, null);
+  }, 2_000);
+  snapshotPoll.unref();
 
   child.stdout.on('data', (chunk) => { stdout = appendLimited(stdout, chunk); });
   child.stderr.on('data', (chunk) => { stderr = appendLimited(stderr, chunk); });
