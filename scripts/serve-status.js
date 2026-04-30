@@ -68,6 +68,7 @@ function triggerRefresh(reason = 'request') {
   console.log(`[${new Date().toISOString()}] Regenerating status for ${REPO} (${reason})…`);
   const child = spawn('bash', [GEN, REPO, OUT], {
     cwd: ROOT,
+    detached: true,
     stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...process.env },
   });
@@ -75,42 +76,58 @@ function triggerRefresh(reason = 'request') {
   let stdout = '';
   let stderr = '';
   let timedOut = false;
-  const timer = setTimeout(() => {
-    timedOut = true;
-    child.kill('SIGTERM');
-    setTimeout(() => child.kill('SIGKILL'), 5_000).unref();
-  }, REFRESH_TIMEOUT_MS);
-  timer.unref();
+  let finished = false;
 
-  child.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
-  child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
-  child.on('close', (code, signal) => {
+  const appendLimited = (target, chunk) => {
+    const next = target + chunk.toString();
+    return next.length > 20_000 ? next.slice(-20_000) : next;
+  };
+
+  const killProcessGroup = (signal) => {
+    if (!child.pid) return;
+    try {
+      process.kill(-child.pid, signal);
+    } catch (_) {
+      try { child.kill(signal); } catch (_) {}
+    }
+  };
+
+  const finish = (code, signal, error) => {
+    if (finished) return;
+    finished = true;
     clearTimeout(timer);
     refreshInProgress = false;
     lastRefreshFinishedAt = Date.now();
 
-    if (code === 0 && !timedOut) {
+    if (!error && code === 0 && !timedOut) {
       console.log(`[${new Date().toISOString()}] Status regenerated for ${REPO}`);
       if (stdout.trim()) console.log(stdout.trim());
       return;
     }
 
-    lastRefreshError = timedOut
+    lastRefreshError = error?.message || (timedOut
       ? `Generator timed out after ${REFRESH_TIMEOUT_MS}ms`
-      : `Generator exited with code=${code} signal=${signal || ''}`;
+      : `Generator exited with code=${code} signal=${signal || ''}`);
 
     console.error(lastRefreshError);
     const details = stderr.trim() || stdout.trim();
     if (details) console.error(details.slice(-4000));
-  });
+  };
 
-  child.on('error', (error) => {
-    clearTimeout(timer);
-    refreshInProgress = false;
-    lastRefreshFinishedAt = Date.now();
-    lastRefreshError = error.message;
-    console.error('Generator failed:', error);
-  });
+  const timer = setTimeout(() => {
+    timedOut = true;
+    killProcessGroup('SIGTERM');
+    setTimeout(() => {
+      killProcessGroup('SIGKILL');
+      finish(null, 'SIGKILL');
+    }, 5_000).unref();
+  }, REFRESH_TIMEOUT_MS);
+  timer.unref();
+
+  child.stdout.on('data', (chunk) => { stdout = appendLimited(stdout, chunk); });
+  child.stderr.on('data', (chunk) => { stderr = appendLimited(stderr, chunk); });
+  child.on('close', (code, signal) => finish(code, signal));
+  child.on('error', (error) => finish(null, null, error));
 
   return true;
 }
