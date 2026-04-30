@@ -6,7 +6,11 @@
     "test": "bats tests/*.bats",
     "lint": "shellcheck lib/*.sh",
     "status": "node scripts/serve-status.js MangoTec/mango-portal",
-    "status:portal": "node scripts/serve-status.js MangoTec/mango-portal"
+    "status:portal": "node scripts/serve-status.js MangoTec/mango-portal",
+    "status:app-v2": "node scripts/serve-status.js MangoTec/mango-app-v2",
+    "status:app-v2:no-open": "node scripts/serve-status.js MangoTec/mango-app-v2 4321 --no-open",
+    "status:install": "scripts/install-status-launchd.sh MangoTec/mango-app-v2 4321",
+    "status:uninstall": "scripts/uninstall-status-launchd.sh"
   },
   "private": true
 }

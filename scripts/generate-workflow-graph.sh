@@ -86,7 +86,9 @@ issues_json="$(jq -s '
   })
 ' "$tmp_dir/issues"/*.json)"
 
-open_prs_json="$(gh pr list -R "$REPO" --state open --json number,title,author,isDraft,url,headRefName,baseRefName,updatedAt,mergeStateStatus,statusCheckRollup)"
+pr_json_fields="number,title,author,isDraft,url,headRefName,baseRefName,updatedAt,mergeStateStatus,statusCheckRollup,closingIssuesReferences"
+open_prs_json="$(gh pr list -R "$REPO" --state open --json "$pr_json_fields")"
+recent_merged_prs_json="$(gh pr list -R "$REPO" --state merged --limit 100 --json "$pr_json_fields,mergedAt" || echo '[]')"
 
 declare -a workflow_files=(
   "assign-agent.yml"
@@ -145,12 +147,14 @@ final_json="$(jq -n \
   --arg generatedAt "$(date '+%Y-%m-%d %H:%M:%S %Z')" \
   --argjson missions "$missions_json" \
   --argjson openPrs "$open_prs_json" \
+  --argjson recentMergedPrs "$recent_merged_prs_json" \
   --argjson runGroups "$run_groups_payload" '
   {
     repo: $repo,
     generatedAt: $generatedAt,
     missions: $missions,
     openPrs: $openPrs,
+    recentMergedPrs: $recentMergedPrs,
     recentRuns: $runGroups
   }
 ')"
@@ -570,7 +574,16 @@ __JSON_PLACEHOLDER__
       prs.find((pr) =>
         !pr.headRefName?.startsWith('consolidate/') &&
         !pr.headRefName?.match(/^wave-\d+\/consolidate$/) &&
-        (pr.title?.includes(`#${issueNumber}`) || false)
+        (
+          pr.title?.includes(`#${issueNumber}`) ||
+          (pr.closingIssuesReferences || []).some((issue) => Number(issue.number) === Number(issueNumber))
+        )
+      );
+
+    const findMergedPrForIssue = (data, mission, issueNumber) =>
+      (data.recentMergedPrs || []).find((pr) =>
+        pr.baseRefName === mission.missionBranch &&
+        (pr.closingIssuesReferences || []).some((issue) => Number(issue.number) === Number(issueNumber))
       );
 
     const currentWaveForMission = (mission, prs) => {
@@ -610,6 +623,9 @@ __JSON_PLACEHOLDER__
       const readyIssue = currentIssues.find((issue) => issue.statusClass === 'ready');
       const inProgressIssue = currentIssues.find((issue) => issue.statusClass === 'inprogress');
       const blockedIssue = currentIssues.find((issue) => issue.statusClass === 'blocked');
+      const mergedPrForInProgressIssue = inProgressIssue
+        ? findMergedPrForIssue(data, mission, inProgressIssue.number)
+        : null;
 
       if (consolidatedPr) {
         const checks = checkSummary(consolidatedPr);
@@ -668,6 +684,20 @@ __JSON_PLACEHOLDER__
           why: 'La automatización no debería avanzar hasta resolver esa falla.',
           link: failedIssue.url,
           linkText: `Abrir issue #${failedIssue.number}`,
+          wave: currentWave,
+          stats,
+        };
+      }
+
+      if (mergedPrForInProgressIssue) {
+        return {
+          level: 'action',
+          emoji: '🔴',
+          status: 'Estado desincronizado',
+          action: `Issue #${inProgressIssue.number} sigue abierta/in-progress, pero PR #${mergedPrForInProgressIssue.number} ya fue mergeada.`,
+          why: 'La automatización no reconcilió el issue; cerrar/reconciliar para que avance la siguiente wave.',
+          link: inProgressIssue.url,
+          linkText: `Reconciliar issue #${inProgressIssue.number}`,
           wave: currentWave,
           stats,
         };

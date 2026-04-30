@@ -4,8 +4,9 @@
 // Regenerates HTML on every browser request — no stale data.
 //
 // Usage:
-//   node scripts/serve-status.js [repo] [port]
+//   node scripts/serve-status.js [repo] [port] [--no-open]
 //   node scripts/serve-status.js MangoTec/mango-portal 4321
+//   node scripts/serve-status.js MangoTec/mango-app-v2 4321 --no-open
 //
 // Or via npm script: npm run status
 
@@ -14,11 +15,18 @@ const { execSync, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const REPO  = process.argv[2] || 'MangoTec/mango-portal';
-const PORT  = Number(process.argv[3]) || 4321;
-const ROOT  = path.resolve(__dirname, '..');
-const GEN   = path.join(ROOT, 'scripts', 'generate-workflow-graph.sh');
-const OUT   = path.join(ROOT, 'status', 'mango-portal');
+const args = process.argv.slice(2);
+const REPO = args.find((arg) => !arg.startsWith('--')) || 'MangoTec/mango-portal';
+const portArg = args.find((arg) => /^\d+$/.test(arg));
+const PORT = Number(portArg) || 4321;
+const NO_OPEN =
+  args.includes('--no-open') ||
+  ['1', 'true', 'yes'].includes(String(process.env.MANGO_WORKFLOW_VIEWER_NO_OPEN || '').toLowerCase());
+const ROOT = path.resolve(__dirname, '..');
+const GEN = path.join(ROOT, 'scripts', 'generate-workflow-graph.sh');
+const OUT = process.env.MANGO_WORKFLOW_VIEWER_OUTPUT_BASE
+  ? path.resolve(process.env.MANGO_WORKFLOW_VIEWER_OUTPUT_BASE)
+  : path.join(ROOT, 'status', 'mango-portal');
 
 function regenerate() {
   console.log(`[${new Date().toISOString()}] Regenerating status for ${REPO}…`);
@@ -58,6 +66,15 @@ const server = http.createServer((req, res) => {
   // Ignore favicon
   if (requestUrl.pathname === '/favicon.ico') { res.writeHead(204); res.end(); return; }
 
+  if (requestUrl.pathname === '/healthz') {
+    res.writeHead(200, {
+      'Cache-Control': 'no-store',
+      'Content-Type': 'text/plain; charset=utf-8',
+    });
+    res.end('ok\n');
+    return;
+  }
+
   const payload = regenerate();
 
   if (!payload) {
@@ -87,12 +104,16 @@ server.listen(PORT, '127.0.0.1', () => {
   const url = `http://localhost:${PORT}`;
   console.log(`✅ Status server running → ${url}`);
   console.log(`   Repo: ${REPO}`);
+  console.log(`   Output: ${OUT}.html`);
   console.log(`   Refreshes live data on every page load\n`);
 
-  // Open browser automatically
-  try {
-    execSync(`open "${url}"`, { stdio: 'ignore' });
-  } catch (_) {
-    // Not on macOS or open not available — user opens manually
+  if (!NO_OPEN) {
+    // Open browser automatically for interactive local runs.
+    // LaunchAgent/service runs should pass --no-open.
+    try {
+      execSync(`open "${url}"`, { stdio: 'ignore' });
+    } catch (_) {
+      // Not on macOS or open not available — user opens manually
+    }
   }
 });
