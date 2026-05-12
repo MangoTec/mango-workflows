@@ -423,6 +423,7 @@ jobs:
           Do NOT modify package manager files (\`package.json\`, \`package-lock.json\`, \`npm-shrinkwrap.json\`, \`yarn.lock\`, \`pnpm-lock.yaml\`, \`bun.lockb\`, etc.) unless issue #${ISSUE_NUMBER} explicitly requests a dependency, tooling, or package-manager change.
           If a package file change is truly required, keep it minimal and explain why in the PR body.
           INSTRUCTIONS
+            )
           fi
 
           PAYLOAD=$(jq -n \
