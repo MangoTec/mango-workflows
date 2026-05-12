@@ -1,0 +1,35 @@
+{
+  "mission": {
+    "id": "partial-roles-mission",
+    "name": "Partial Roles Mission"
+  },
+  "agents": {
+    "primary": "copilot"
+  },
+  "agentRoles": {
+    "enabled": true,
+    "roles": {
+      "implement": {
+        "prompt": ".github/prompts/implement.md",
+        "output": "pr",
+        "required": true
+      },
+      "qa": {
+        "prompt": ".github/prompts/qa-review.md",
+        "output": "review",
+        "required": false
+      }
+    },
+    "pipeline": ["implement", "qa"]
+  },
+  "autonomy": {
+    "level": "human-gate-pr",
+    "maxRetries": 2
+  },
+  "waves": {
+    "0": {
+      "issues": [200, 201],
+      "gate": "auto"
+    }
+  }
+}

@@ -1,0 +1,61 @@
+{
+  "mission": {
+    "id": "test-roles-mission",
+    "name": "Test Agent Roles Mission",
+    "specSource": "specs/test/spec.md"
+  },
+  "agents": {
+    "primary": "copilot",
+    "fallbackProvider": "codex",
+    "model": "claude-sonnet-4"
+  },
+  "agentRoles": {
+    "enabled": true,
+    "roles": {
+      "architect": {
+        "prompt": ".github/prompts/architect.md",
+        "output": "comment",
+        "required": true
+      },
+      "implement": {
+        "prompt": ".github/prompts/implement.md",
+        "output": "pr",
+        "required": true
+      },
+      "qa": {
+        "prompt": ".github/prompts/qa-review.md",
+        "output": "review",
+        "required": true
+      }
+    },
+    "pipeline": ["architect", "implement", "qa"]
+  },
+  "autonomy": {
+    "level": "human-gate-pr",
+    "maxRetries": 2,
+    "waveGateRequired": true
+  },
+  "specLinter": {
+    "minBodyLength": 200,
+    "requiredSections": ["Requirements", "Acceptance Criteria"],
+    "validateFileRefs": true,
+    "requireSpecSource": true
+  },
+  "waves": {
+    "0": {
+      "issues": [100, 101],
+      "gate": "auto"
+    },
+    "1": {
+      "issues": [102, 103, 104],
+      "gate": "verify-then-auto",
+      "verify": ["verify:build", "verify:types"]
+    }
+  },
+  "verification": {
+    "hooks": {
+      "verify:build": "npm run build 2>&1 | tail -20",
+      "verify:types": "npx tsc --noEmit 2>&1 | tail -20"
+    }
+  }
+}
