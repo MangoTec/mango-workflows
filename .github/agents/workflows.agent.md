@@ -27,7 +27,7 @@ You must know how `mango-workflows` works before changing anything. Prefer small
 
 ### Shared workflows
 
-- `.github/workflows/assign-agent.yml` — triggered by `status:ready`; resolves mission config, validates issue body, assigns Copilot or dispatches Codex.
+- `.github/workflows/assign-agent.yml` — triggered by `status:ready`; resolves mission config, validates issue body, builds role-aware prompt (v4.1) if `agentRoles.enabled`, posts prompt as issue comment, assigns Copilot with custom instructions (including role prompt) or dispatches Codex.
 - `.github/workflows/agent-retry.yml` — triggered by `status:failed`; switches provider or escalates to `needs-human` after max retries.
 - `.github/workflows/wave-ready.yml` — syncs consolidated PRs from child PRs and finalizes merged wave PRs.
 - `.github/workflows/gate-orchestrator.yml` — unlocks waves from closed issues or `gate:approved` gate labels.
@@ -44,6 +44,15 @@ You must know how `mango-workflows` works before changing anything. Prefer small
 - `lib/retry.sh` — retry labels/provider fallback helpers.
 - `lib/spec-linter.sh` — issue body/spec checks.
 - `lib/verify.sh` — verification helpers.
+- `lib/roles.sh` — (v4.1) agent role pipeline: `roles_enabled`, `roles_get_pipeline`, `roles_get_prompt`, `roles_get_output`, `roles_is_required`, `roles_has_role`, `roles_next`, `roles_first`, `roles_last`, `roles_count`, `roles_current_for_issue`, `roles_label`, `roles_all_labels`.
+- `lib/prompts.sh` — (v4.1) prompt template resolution and building: `prompt_resolve_path` (priority: repo-local `.github/prompts/` → shared `prompts/`), `prompt_read_agents_md`, `prompt_build` (substitutes `{{ISSUE_BODY}}`, `{{AGENTS_MD}}`, `{{PREV_OUTPUT}}`, `{{ROLE}}`), `prompt_exists`.
+
+### Prompt templates (v4.1)
+
+- `prompts/architect.md` — architect role: analyze issue, produce implementation plan, file list, testing strategy.
+- `prompts/implement.md` — implement role: code the solution following architect plan + AGENTS.md conventions.
+- `prompts/qa-review.md` — QA review role: review PR for correctness, security, test coverage.
+- Consumer repos can override prompts by placing files at `.github/prompts/{role}.md`; the repo-local version takes priority.
 
 ### Tests and utilities
 
@@ -91,6 +100,17 @@ A v5 mission has:
     "requiredSections": ["Requirements", "Acceptance Criteria"],
     "validateFileRefs": false,
     "requireSpecSource": true
+  },
+  "agentRoles": {
+    "enabled": true,
+    "roles": {
+      "implement": {
+        "prompt": ".github/prompts/implement.md",
+        "output": "pr",
+        "required": true
+      }
+    },
+    "pipeline": ["implement"]
   },
   "autonomy": {
     "level": "human-gate-pr",
@@ -204,6 +224,30 @@ Legacy `.github/pipeline-config.json` remains supported. Never break legacy fixt
    ```
 
 9. Watch `Assign Agent`, then child PRs, then `Wave Ready`.
+
+### E. Enable role-aware prompts (v4.1) in a mission
+
+1. Add `agentRoles` block to the mission config:
+
+   ```jsonc
+   "agentRoles": {
+     "enabled": true,
+     "roles": {
+       "implement": { "prompt": ".github/prompts/implement.md", "output": "pr", "required": true }
+     },
+     "pipeline": ["implement"]
+   }
+   ```
+
+2. (Optional) Place repo-local prompt overrides at `.github/prompts/{role}.md`. If absent, falls back to shared `prompts/` in `mango-workflows`.
+3. Ensure `AGENTS.md` exists in the consumer repo root — it gets injected into the prompt as `{{AGENTS_MD}}`.
+4. When `assign-agent` runs with roles enabled:
+   - `lib/roles.sh` reads the pipeline and role config.
+   - `lib/prompts.sh` resolves the prompt template (repo-local → shared), reads `AGENTS.md`, substitutes `{{ISSUE_BODY}}`, `{{AGENTS_MD}}`, `{{PREV_OUTPUT}}`, `{{ROLE}}`.
+   - The built prompt is posted as an issue comment **before** Copilot assignment.
+   - The prompt (capped 4KB) is also included in `custom_instructions` of the Copilot Agent Assignment API.
+5. Available roles: `architect` (plan), `implement` (code), `qa-review` (review). Pipeline order defines execution sequence.
+6. Multi-role pipelines (e.g., `["architect", "implement"]`) are supported: each role's output feeds into `{{PREV_OUTPUT}}` of the next.
 
 ### B. Add a wave to an existing mission
 
