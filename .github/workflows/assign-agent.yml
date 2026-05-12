@@ -33,7 +33,9 @@ jobs:
         with:
           repository: MangoTec/mango-workflows
           path: .mango-workflows
-          sparse-checkout: lib
+          sparse-checkout: |
+            lib
+            prompts
 
       - name: Fetch mission branches
         run: |
@@ -128,6 +130,16 @@ jobs:
           echo "auto_assign=$(jq -r '.autonomy.autoAssignAgent // true' "$CONFIG_PATH")" >> "$GITHUB_OUTPUT"
           echo "autonomy=$(jq -r '.autonomy.level // "human-gate-pr"' "$CONFIG_PATH")" >> "$GITHUB_OUTPUT"
 
+          # v4.1: Agent roles
+          source .mango-workflows/lib/roles.sh
+          if roles_enabled "$CONFIG_PATH"; then
+            echo "roles_enabled=true" >> "$GITHUB_OUTPUT"
+            echo "roles_pipeline=$(roles_get_pipeline "$CONFIG_PATH" | tr '\n' ' ' | xargs)" >> "$GITHUB_OUTPUT"
+          else
+            echo "roles_enabled=false" >> "$GITHUB_OUTPUT"
+            echo "roles_pipeline=" >> "$GITHUB_OUTPUT"
+          fi
+
           echo "Resolved: mission=$MISSION_ID, config=$CONFIG_PATH, branch=$(mission_get_branch "$MISSIONS_DIR" "$MISSION_ID"), ref=$CONFIG_REF"
 
       - name: Determine provider
@@ -215,13 +227,79 @@ jobs:
         run: |
           gh issue comment "$ISSUE_NUMBER" --body "🟢 **Pipeline**: Issue ready. Autonomy is \`manual-stages\` — assign agent manually."
 
+      - name: Build role-aware prompt
+        id: prompt
+        if: steps.config.outputs.roles_enabled == 'true' && steps.spec.outputs.valid == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ inputs.issue-number }}
+          CONFIG_PATH: ${{ steps.config.outputs.config_path }}
+        run: |
+          source .mango-workflows/lib/prompts.sh
+
+          ISSUE_BODY=$(gh issue view "$ISSUE_NUMBER" --json body --jq '.body')
+
+          # Build implement prompt: template + AGENTS.md + issue body
+          PROMPT=$(prompt_build "$CONFIG_PATH" "implement" "." ".mango-workflows" "$ISSUE_BODY" "")
+
+          if [ -n "$PROMPT" ]; then
+            # Store in a temp file to avoid shell escaping issues with GITHUB_OUTPUT
+            echo "$PROMPT" > /tmp/agent-prompt.md
+            echo "has_prompt=true" >> "$GITHUB_OUTPUT"
+            echo "Built role-aware prompt for implement role ($(wc -c < /tmp/agent-prompt.md) bytes)"
+          else
+            echo "has_prompt=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Failed to build role-aware prompt, falling back to generic instructions"
+          fi
+
       # ─── Provider: Copilot ───
-      - name: Instruct Copilot target branch and TDD
+      - name: Instruct Copilot (role-aware)
         if: >
           steps.spec.outputs.valid == 'true' &&
           steps.config.outputs.auto_assign == 'true' &&
           steps.config.outputs.autonomy != 'manual-stages' &&
-          steps.provider.outputs.provider == 'copilot'
+          steps.provider.outputs.provider == 'copilot' &&
+          steps.config.outputs.roles_enabled == 'true' &&
+          steps.prompt.outputs.has_prompt == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ inputs.issue-number }}
+          MISSION_BRANCH: ${{ steps.config.outputs.mission_branch }}
+          ROLES_PIPELINE: ${{ steps.config.outputs.roles_pipeline }}
+        run: |
+          # v4.1: Post the role-aware prompt as a comment before assignment.
+          # Copilot reads issue comments for context — this MUST come before assignment.
+
+          PROMPT=$(cat /tmp/agent-prompt.md)
+
+          COMMENT=$(cat <<INSTRUCTIONS
+          ⚠️ **IMPORTANT — Agent Role Instructions (v4.1)**
+
+          **Target Branch**: Your PR MUST target the branch \`$MISSION_BRANCH\` (NOT \`main\`).
+          Include \`Closes #$ISSUE_NUMBER\` in the PR body.
+
+          **Pipeline**: \`$ROLES_PIPELINE\`
+          You are executing the **implement** role. Follow the instructions below precisely.
+
+          ---
+
+          $PROMPT
+
+          ---
+
+          **Dependency and lockfile policy (mandatory)**:
+          Do NOT modify package manager files (\`package.json\`, \`package-lock.json\`, etc.) unless this issue explicitly requests it.
+          INSTRUCTIONS
+          )
+          gh issue comment "$ISSUE_NUMBER" --body "$COMMENT"
+
+      - name: Instruct Copilot (generic fallback)
+        if: >
+          steps.spec.outputs.valid == 'true' &&
+          steps.config.outputs.auto_assign == 'true' &&
+          steps.config.outputs.autonomy != 'manual-stages' &&
+          steps.provider.outputs.provider == 'copilot' &&
+          (steps.config.outputs.roles_enabled != 'true' || steps.prompt.outputs.has_prompt != 'true')
         env:
           GH_TOKEN: ${{ github.token }}
           ISSUE_NUMBER: ${{ inputs.issue-number }}
@@ -324,14 +402,28 @@ jobs:
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "/repos/${REPOSITORY}/branches/${ENCODED_MISSION_BRANCH}" >/dev/null
 
-          CUSTOM_INSTRUCTIONS=$(cat <<INSTRUCTIONS
+          # v4.1: If role-aware prompt was built, include it in custom_instructions
+          if [ -f /tmp/agent-prompt.md ]; then
+            ROLE_PROMPT=$(cat /tmp/agent-prompt.md | head -c 4000)
+            CUSTOM_INSTRUCTIONS=$(cat <<INSTRUCTIONS
+          Work from the mission branch \`${MISSION_BRANCH}\` for mission \`${MISSION_ID}\`.
+          Your pull request must target \`${MISSION_BRANCH}\`, not \`main\`.
+          Include \`Closes #${ISSUE_NUMBER}\` in the PR body.
+          Do NOT modify package manager files unless issue #${ISSUE_NUMBER} explicitly requests it.
+
+          --- ROLE INSTRUCTIONS (implement) ---
+          ${ROLE_PROMPT}
+          INSTRUCTIONS
+            )
+          else
+            CUSTOM_INSTRUCTIONS=$(cat <<INSTRUCTIONS
           Work from the mission branch \`${MISSION_BRANCH}\` for mission \`${MISSION_ID}\`.
           Your pull request must target \`${MISSION_BRANCH}\`, not \`main\`.
           Include \`Closes #${ISSUE_NUMBER}\` in the PR body.
           Do NOT modify package manager files (\`package.json\`, \`package-lock.json\`, \`npm-shrinkwrap.json\`, \`yarn.lock\`, \`pnpm-lock.yaml\`, \`bun.lockb\`, etc.) unless issue #${ISSUE_NUMBER} explicitly requests a dependency, tooling, or package-manager change.
           If a package file change is truly required, keep it minimal and explain why in the PR body.
           INSTRUCTIONS
-          )
+          fi
 
           PAYLOAD=$(jq -n \
             --arg repo "$REPOSITORY" \
