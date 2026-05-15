@@ -402,6 +402,16 @@ jobs:
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "/repos/${REPOSITORY}/branches/${ENCODED_MISSION_BRANCH}" >/dev/null
 
+          # Unassign first to ensure a fresh session (re-assigning an already-assigned
+          # Copilot is idempotent and does NOT create a new coding session).
+          GH_TOKEN="$TOKEN" gh api \
+            --method DELETE \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "/repos/${REPOSITORY}/issues/${ISSUE_NUMBER}/assignees" \
+            --input - <<< '{"assignees":["copilot-swe-agent[bot]"]}' 2>/dev/null || true
+          sleep 3
+
           # v4.1: If role-aware prompt was built, include it in custom_instructions
           if [ -f /tmp/agent-prompt.md ]; then
             ROLE_PROMPT=$(cat /tmp/agent-prompt.md | head -c 4000)
