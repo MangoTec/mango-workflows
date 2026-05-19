@@ -488,7 +488,7 @@ create_final_pr_if_needed() {
 
 run_verify_hooks() {
   local config="$1" wave="$2"
-  local verify_passed=true verify_errors="" hook_name hook_cmd hook_output hook_exit
+  local verify_passed=true verify_errors="" hook_name hook_cmd hook_output hook_exit hook_log
   mapfile -t VERIFY_HOOKS < <(wave_get_verify_hooks "$config" "$wave")
 
   if [ "${#VERIFY_HOOKS[@]}" -eq 0 ]; then
@@ -513,10 +513,13 @@ run_verify_hooks() {
     fi
 
     echo "Running verify hook: $hook_name → $hook_cmd"
+    echo "::debug::Running verify hook command: $hook_cmd"
+    hook_log="/tmp/wave-verify-${hook_name//[^A-Za-z0-9_.-]/_}.log"
     set +e
-    hook_output=$(eval "$hook_cmd" 2>&1)
+    eval "$hook_cmd" 2>&1 | tee "$hook_log"
     hook_exit=$?
     set -e
+    hook_output=$(cat "$hook_log")
 
     if [ "$hook_exit" -ne 0 ]; then
       verify_passed=false
