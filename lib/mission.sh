@@ -11,7 +11,11 @@ set -euo pipefail
 mission_legacy_config_path() {
   local dir="$1"
   local github_dir
-  github_dir="$(cd "$(dirname "$dir")" 2>/dev/null && pwd || true)"
+  if github_dir="$(cd "$(dirname "$dir")" 2>/dev/null && pwd)"; then
+    :
+  else
+    github_dir=""
+  fi
   if [ -n "$github_dir" ]; then
     echo "$github_dir/pipeline-config.json"
   else

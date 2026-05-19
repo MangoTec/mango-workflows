@@ -179,6 +179,7 @@ ensure_verify_php_dependencies() {
     set -e
 
     if [ "$install_exit" -ne 0 ]; then
+      # shellcheck disable=SC2016
       printf '### ❌ `composer install` failed (exit %s)\n```\n%s\n```\n' \
         "$install_exit" "$(echo "$install_output" | tail -50)" \
         > /tmp/wave-verify-errors.md
@@ -197,6 +198,7 @@ ensure_verify_php_dependencies() {
     set -e
 
     if [ "$install_exit" -ne 0 ]; then
+      # shellcheck disable=SC2016
       printf '### ❌ `composer install` failed (exit %s)\n```\n%s\n```\n' \
         "$install_exit" "$(echo "$install_output" | tail -50)" \
         > /tmp/wave-verify-errors.md

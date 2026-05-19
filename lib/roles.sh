@@ -70,7 +70,7 @@ roles_has_role() {
 # Output: next role name, or empty if current is last
 roles_next() {
   local config="$1" current="$2"
-  local pipeline found_current=false
+  local found_current=false
 
   while IFS= read -r role; do
     if [ "$found_current" = "true" ]; then
