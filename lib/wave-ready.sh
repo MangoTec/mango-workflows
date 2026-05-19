@@ -168,6 +168,63 @@ ensure_verify_dependencies() {
   return 0
 }
 
+ensure_verify_php_dependencies() {
+  local install_output install_exit
+
+  if [ -f api/composer.json ]; then
+    echo "Installing PHP dependencies for verification: composer install (api/)"
+    set +e
+    install_output=$(cd api && composer install --prefer-dist --no-interaction --no-progress 2>&1)
+    install_exit=$?
+    set -e
+
+    if [ "$install_exit" -ne 0 ]; then
+      printf '### ❌ `composer install` failed (exit %s)\n```\n%s\n```\n' \
+        "$install_exit" "$(echo "$install_output" | tail -50)" \
+        > /tmp/wave-verify-errors.md
+      return 1
+    fi
+
+    echo "$install_output" | tail -20
+    return 0
+  fi
+
+  if [ -f composer.json ]; then
+    echo "Installing PHP dependencies for verification: composer install"
+    set +e
+    install_output=$(composer install --prefer-dist --no-interaction --no-progress 2>&1)
+    install_exit=$?
+    set -e
+
+    if [ "$install_exit" -ne 0 ]; then
+      printf '### ❌ `composer install` failed (exit %s)\n```\n%s\n```\n' \
+        "$install_exit" "$(echo "$install_output" | tail -50)" \
+        > /tmp/wave-verify-errors.md
+      return 1
+    fi
+
+    echo "$install_output" | tail -20
+  fi
+}
+
+verify_hooks_require_php_dependencies() {
+  local config="$1" hook_name hook_cmd
+
+  for hook_name in "${VERIFY_HOOKS[@]}"; do
+    hook_cmd=$(jq -r ".verification.hooks[\"$hook_name\"] // empty" "$config")
+
+    if [[ "$hook_cmd" == *"php "* ]] \
+      || [[ "$hook_cmd" == *"artisan"* ]] \
+      || [[ "$hook_cmd" == *"vendor/bin/phpunit"* ]] \
+      || [[ "$hook_cmd" == *"vendor/bin/pint"* ]] \
+      || [[ "$hook_cmd" == *"composer "* ]]; then
+      return 0
+    fi
+  done
+
+  return 1
+}
+
 wave_consolidated_branch() {
   local mission_id="$1" mission_branch="$2" base_branch="$3" wave="$4"
 
@@ -439,6 +496,11 @@ run_verify_hooks() {
   apply_verification_env "$config"
   if ! ensure_verify_dependencies; then
     return 1
+  fi
+  if verify_hooks_require_php_dependencies "$config"; then
+    if ! ensure_verify_php_dependencies; then
+      return 1
+    fi
   fi
 
   for hook_name in "${VERIFY_HOOKS[@]}"; do
