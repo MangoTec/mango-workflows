@@ -1,0 +1,74 @@
+# Verify governance files (shared rules, MCP config) haven't drifted
+# from mango-engineering source of truth.
+#
+# Managed by mango-engineering — do not edit locally.
+
+name: Governance Drift Check
+
+on:
+  pull_request:
+    paths:
+      - '.claude/rules/shared-*'
+      - '.claude/rules/eng-*'
+      - '.vscode/mcp.json'
+
+jobs:
+  drift-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for governance drift
+        run: |
+          ENGINEERING_URL="https://raw.githubusercontent.com/MangoTec/mango-engineering/main"
+          DRIFT=false
+
+          echo "🔍 Checking governance files against mango-engineering"
+
+          # Check shared rules
+          for f in .claude/rules/shared-*.md; do
+            [ -f "$f" ] || continue
+            filename=$(basename "$f")
+            src_name="${filename#shared-}"
+            remote=$(curl -sf "$ENGINEERING_URL/rules/shared/$src_name" || echo "__MISS__")
+            [ "$remote" = "__MISS__" ] && continue
+            if ! diff -q <(cat "$f") <(echo "$remote") > /dev/null 2>&1; then
+              echo "❌ $filename drifted from mango-engineering"
+              DRIFT=true
+            fi
+          done
+
+          # Check stack rules
+          for f in .claude/rules/eng-*.md; do
+            [ -f "$f" ] || continue
+            filename=$(basename "$f")
+            src_name="${filename#eng-}"
+            for stack in laravel nextjs express astro; do
+              remote=$(curl -sf "$ENGINEERING_URL/rules/$stack/$src_name" || echo "__MISS__")
+              [ "$remote" = "__MISS__" ] && continue
+              if ! diff -q <(cat "$f") <(echo "$remote") > /dev/null 2>&1; then
+                echo "❌ $filename drifted from mango-engineering/rules/$stack/"
+                DRIFT=true
+              fi
+              break
+            done
+          done
+
+          # Check MCP config
+          if [ -f .vscode/mcp.json ]; then
+            remote=$(curl -sf "$ENGINEERING_URL/mcp/mcp.json" || echo "__MISS__")
+            if [ "$remote" != "__MISS__" ]; then
+              if ! diff -q <(cat .vscode/mcp.json) <(echo "$remote") > /dev/null 2>&1; then
+                echo "❌ .vscode/mcp.json drifted from mango-engineering"
+                DRIFT=true
+              fi
+            fi
+          fi
+
+          if [ "$DRIFT" = true ]; then
+            echo ""
+            echo "::error::Governance drift detected. Files prefixed shared-* and eng-* are managed by mango-engineering. Do not edit locally."
+            exit 1
+          fi
+
+          echo "✅ All governance files match mango-engineering"

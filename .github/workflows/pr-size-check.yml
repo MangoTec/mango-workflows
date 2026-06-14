@@ -1,0 +1,87 @@
+# Advisory PR size / review-risk check.
+# Measures the diff and posts a comment if it exceeds the review-risk threshold.
+# ADVISORY ONLY — never fails the PR (ADR-002). Policy: rules/shared/08-review-delivery.md
+#
+# Managed by mango-engineering — do not edit locally.
+# To tune the threshold for a migration-heavy repo, override MAX_LINES below.
+
+name: PR Size Check (advisory)
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+env:
+  # Review-risk threshold in changed lines. Override per-repo if needed.
+  MAX_LINES: "400"
+  # Glob patterns excluded from the count (generated / lockfiles / vendored).
+  EXCLUDE_PATHSPEC: ":(exclude)**/*.lock :(exclude)**/package-lock.json :(exclude)**/composer.lock :(exclude)**/yarn.lock :(exclude)**/pnpm-lock.yaml :(exclude)**/dist/** :(exclude)**/build/** :(exclude)**/vendor/** :(exclude)**/*.generated.*"
+
+jobs:
+  pr-size-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Measure diff and comment (advisory)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          # Significant lines (excluding generated/lockfiles/vendored)
+          STAT=$(git diff --numstat "$BASE_SHA" "$HEAD_SHA" -- . $EXCLUDE_PATHSPEC \
+            | awk '{ add += $1; del += $2 } END { print (add+0)" "(del+0) }')
+          ADD=$(echo "$STAT" | cut -d' ' -f1)
+          DEL=$(echo "$STAT" | cut -d' ' -f2)
+          TOTAL=$((ADD + DEL))
+          FILES=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA" -- . $EXCLUDE_PATHSPEC | wc -l | tr -d ' ')
+
+          echo "Changed (significant): +$ADD / -$DEL = $TOTAL lines across $FILES files (threshold: $MAX_LINES)"
+
+          MARKER="<!-- pr-size-check -->"
+
+          if [ "$TOTAL" -le "$MAX_LINES" ]; then
+            echo "✅ Under threshold — no advisory needed."
+            # Remove a previous advisory comment if the PR shrank below threshold.
+            CID=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
+              --jq ".[] | select(.body | contains(\"$MARKER\")) | .id" | head -n1 || true)
+            [ -n "${CID:-}" ] && gh api -X DELETE "repos/${GITHUB_REPOSITORY}/issues/comments/${CID}" || true
+            exit 0
+          fi
+
+          BODY=$(cat <<EOF
+          $MARKER
+          ### 📐 Review-risk aviso (advisory)
+
+          Este PR cambia **$TOTAL líneas significativas** (+$ADD / -$DEL) en **$FILES archivos**, por encima del umbral de **$MAX_LINES** (lockfiles, generados y vendored ya están excluidos).
+
+          Un PR grande es deuda de revisión para quien lo lee. Considerá una estrategia de entrega (ver \`rules/shared/08-review-delivery.md\`):
+
+          - **Stacked PRs** — una branch por unidad lógica, encadenadas.
+          - **Feature branch** — encadenar sobre una branch de integración vacía (rollback limpio).
+          - **Exception-OK** — si no se puede dividir de forma sensata (ej. migración), dejá una nota justificándolo.
+
+          _Esto es solo un aviso — no bloquea el merge._
+          EOF
+          )
+
+          # Upsert: update existing advisory comment or create a new one.
+          CID=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" \
+            --jq ".[] | select(.body | contains(\"$MARKER\")) | .id" | head -n1 || true)
+          if [ -n "${CID:-}" ]; then
+            gh api -X PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${CID}" -f body="$BODY" >/dev/null
+            echo "Updated existing advisory comment."
+          else
+            gh pr comment "$PR_NUMBER" --body "$BODY"
+            echo "Posted advisory comment."
+          fi
