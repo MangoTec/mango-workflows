@@ -85,14 +85,22 @@ git commit -m "type(scope): description"
 git push -u origin HEAD
 ```
 
-### Step 6 — Create PR
+### Step 6 — Verify-evidence gate
+
+Before opening the PR, verify the change per `rules/shared/11-verify-evidence.md`:
+- Run the repo's test command and/or the commands that exercise the change.
+- Capture the REAL output (tests passed, relevant results).
+- The PR body `## Testing` section MUST contain that evidence — actual commands and output, never "should work" or placeholders.
+- If verification can't run or fails: STOP. Do not open the PR as done — report it (`status: needs-human` / risk per `10-result-contract`).
+
+### Step 7 — Create PR
 
 Use `gh pr create` with:
 - Title: same as commit message
-- Body: English description with purpose, changes, and testing steps
+- Body: English description with purpose, changes, and the verification evidence
 - Base: default branch
 
-### Step 7 — Request Copilot review
+### Step 8 — Request Copilot review
 
 ```bash
 gh pr edit <number> --add-reviewer "github-actions[bot]"
@@ -111,7 +119,12 @@ Or use `mcp_github_request_copilot_review` if available.
 - [Change 2]
 
 ## Testing
-- [ ] [How to verify]
+Evidence — real commands + output, not placeholders:
+```
+$ <test/verify command>
+<actual output — tests passed, relevant results>
+```
+Out of scope: [what was not verified]
 ```
 
 ## Error Handling
