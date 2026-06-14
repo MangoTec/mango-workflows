@@ -1,0 +1,54 @@
+{
+  "servers": {
+    "github": {
+      "url": "https://api.githubcopilot.com/mcp/",
+      "type": "http"
+    },
+    "engram": {
+      "command": "engram",
+      "args": ["mcp"],
+      "type": "stdio"
+    },
+    "sentry": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@sentry/mcp-server",
+        "--access-token=${input:sentry_auth_token}",
+        "--organization-slug=mangxo"
+      ],
+      "type": "stdio"
+    },
+    "slack": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-slack"],
+      "type": "stdio",
+      "env": {
+        "SLACK_BOT_TOKEN": "${input:slack_bot_token}",
+        "SLACK_TEAM_ID": "mangxo"
+      }
+    },
+    "asana": {
+      "url": "https://asana-mcp-server.asana-enterprise-account.workers.dev/sse",
+      "type": "http"
+    },
+    "notion": {
+      "url": "https://mcp.notion.com/sse",
+      "type": "http"
+    }
+  },
+  "inputs": [
+    {
+      "id": "sentry_auth_token",
+      "type": "promptString",
+      "description": "Sentry Auth Token (sntryu_...)",
+      "password": true
+    },
+    {
+      "id": "slack_bot_token",
+      "type": "promptString",
+      "description": "Slack Bot Token (xoxb-...)",
+      "password": true
+    }
+  ]
+}
