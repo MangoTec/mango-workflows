@@ -28,10 +28,6 @@
         "SLACK_TEAM_ID": "mangxo"
       }
     },
-    "asana": {
-      "url": "https://asana-mcp-server.asana-enterprise-account.workers.dev/sse",
-      "type": "http"
-    },
     "notion": {
       "url": "https://mcp.notion.com/sse",
       "type": "http"
